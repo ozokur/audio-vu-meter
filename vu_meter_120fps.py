@@ -260,11 +260,14 @@ class VUMeterWidget(QWidget):
         self.left_db_label.setFixedWidth(70)
         self.left_bpm_label = QLabel("-- BPM")
         self.left_bpm_label.setFixedWidth(70)
+        self.left_peak_hold_label = QLabel("Pk -- dB")
+        self.left_peak_hold_label.setFixedWidth(80)
         left_layout.addWidget(self.l_light)
         left_layout.addWidget(left_label)
         left_layout.addWidget(self.left_bar)
         left_layout.addWidget(self.left_db_label)
         left_layout.addWidget(self.left_bpm_label)
+        left_layout.addWidget(self.left_peak_hold_label)
 
         right_layout = QHBoxLayout()
         self.r_light = self._make_light()
@@ -278,11 +281,14 @@ class VUMeterWidget(QWidget):
         self.right_db_label.setFixedWidth(70)
         self.right_bpm_label = QLabel("-- BPM")
         self.right_bpm_label.setFixedWidth(70)
+        self.right_peak_hold_label = QLabel("Pk -- dB")
+        self.right_peak_hold_label.setFixedWidth(80)
         right_layout.addWidget(self.r_light)
         right_layout.addWidget(right_label)
         right_layout.addWidget(self.right_bar)
         right_layout.addWidget(self.right_db_label)
         right_layout.addWidget(self.right_bpm_label)
+        right_layout.addWidget(self.right_peak_hold_label)
 
         peak_layout = QHBoxLayout()
         peak_label = QLabel("Peak:")
@@ -331,6 +337,18 @@ class VUMeterWidget(QWidget):
             bands_layout.addLayout(row)
 
         layout.addLayout(bands_layout)
+        
+        # Peak hold control
+        ctl_row = QHBoxLayout()
+        ctl_row.addWidget(QLabel("Peak Hold ms:"))
+        self.peak_hold_spin = QSpinBox()
+        self.peak_hold_spin.setRange(0, 10000)
+        self.peak_hold_spin.setSingleStep(50)
+        self.peak_hold_spin.setValue(1000)
+        self.peak_hold_spin.valueChanged.connect(self.on_peak_hold_changed)
+        ctl_row.addWidget(self.peak_hold_spin)
+        ctl_row.addStretch()
+        layout.addLayout(ctl_row)
         self.setLayout(layout)
 
     @staticmethod
@@ -346,6 +364,12 @@ class VUMeterWidget(QWidget):
             return
         self.min_db = max(-120.0, min(-10.0, val))
 
+    def set_peak_hold_ms(self, ms: int):
+        try:
+            self.peak_hold_ms = max(0, int(ms))
+        except Exception:
+            self.peak_hold_ms = 1000
+
     def update_levels(self, left: float, right: float):
         def _s(v: float) -> float:
             try:
@@ -358,6 +382,27 @@ class VUMeterWidget(QWidget):
 
         self.left_level = _s(left)
         self.right_level = _s(right)
+
+        # Peak-and-hold per channel
+        now = time.monotonic()
+        hold_s = getattr(self, 'peak_hold_ms', 1000) / 1000.0 if hasattr(self, 'peak_hold_ms') else 1.0
+        if not hasattr(self, '_peak_l_val'):
+            self._peak_l_val = 0.0
+            self._peak_r_val = 0.0
+            self._peak_l_until = 0.0
+            self._peak_r_until = 0.0
+        # Left
+        if self.left_level > self._peak_l_val:
+            self._peak_l_val = self.left_level
+            self._peak_l_until = now + hold_s
+        elif now > self._peak_l_until and self.left_level < self._peak_l_val:
+            self._peak_l_val = self.left_level
+        # Right
+        if self.right_level > self._peak_r_val:
+            self._peak_r_val = self.right_level
+            self._peak_r_until = now + hold_s
+        elif now > self._peak_r_until and self.right_level < self._peak_r_val:
+            self._peak_r_val = self.right_level
 
         self.peak_left = max(self.peak_left * 0.95, self.left_level)
         self.peak_right = max(self.peak_right * 0.95, self.right_level)
@@ -382,6 +427,14 @@ class VUMeterWidget(QWidget):
         self.left_db_label.setText(f"{left_db:.1f} dB")
         self.right_db_label.setText(f"{right_db:.1f} dB")
         self.peak_label.setText(f"{peak_db:.1f} dB")
+        # Peak-hold labels per channel
+        try:
+            lpk = self._linear_to_db(self._peak_l_val)
+            rpk = self._linear_to_db(self._peak_r_val)
+        except Exception:
+            lpk = -float('inf'); rpk = -float('inf')
+        self.left_peak_hold_label.setText(f"Pk {lpk:.1f} dB")
+        self.right_peak_hold_label.setText(f"Pk {rpk:.1f} dB")
         # Tempo Ä±ÅŸÄ±klarÄ± (Sol/SaÄŸ)
         self._update_tempo('L', self.left_level)
         self._update_tempo('R', self.right_level)
@@ -935,6 +988,20 @@ class VUMeterApp(QMainWindow):
                 return
             payload = bytes(int(x) & 0xFF for x in bytes_list)
             self.ser.write(payload)
+        except Exception:
+            pass
+
+    def on_peak_hold_changed(self):
+        try:
+            val = int(self.vu_widget.peak_hold_ms) if hasattr(self.vu_widget, 'peak_hold_ms') else 1000
+        except Exception:
+            val = 1000
+        try:
+            new_val = int(self.peak_hold_spin.value())
+        except Exception:
+            new_val = val
+        try:
+            self.vu_widget.set_peak_hold_ms(new_val)
         except Exception:
             pass
 
