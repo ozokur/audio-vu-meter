@@ -221,6 +221,12 @@ class VUMeterWidget(QWidget):
             'Rmid': {'env': 0.0, 'on_until': 0.0, 'last': 0.0, 'last_flash': 0.0, 'beats': []},
             'Rhigh': {'env': 0.0, 'on_until': 0.0, 'last': 0.0, 'last_flash': 0.0, 'beats': []},
         }
+        # Per-key tarihçe ve varsayılan parametreler
+        for k in list(self._tempo.keys()):
+            self._tempo[k]['hist'] = []
+            self._tempo[k]['hist_maxlen'] = 120
+        self._tempo_params = {kk: {'alpha': 0.20, 'delta': 0.08, 'min_interval': 0.25, 'hold': 0.12, 'auto': False, 'k': 0.6}
+                              for kk in self._tempo.keys()}
         self._init_ui()
 
     def _init_ui(self):
@@ -427,16 +433,29 @@ class VUMeterWidget(QWidget):
             return "-- BPM"
         return f"{bpm:.0f} BPM"
 
-    def set_tempo_params(self, alpha: float = None, delta: float = None,
-                          min_interval_s: float = None, hold_s: float = None):
+    def set_tempo_params_for(self, key: str, *, alpha: float = None, delta: float = None,
+                             min_interval_s: float = None, hold_s: float = None,
+                             auto: bool = None, k: float = None):
+        if not hasattr(self, '_tempo_params') or key not in self._tempo_params:
+            return
+        p = self._tempo_params[key]
         if alpha is not None:
-            self.tempo_alpha = max(0.0, min(1.0, float(alpha)))
+            p['alpha'] = max(0.0, min(1.0, float(alpha)))
         if delta is not None:
-            self.tempo_delta = max(0.0, min(1.0, float(delta)))
+            p['delta'] = max(0.0, min(1.0, float(delta)))
         if min_interval_s is not None:
-            self.tempo_min_interval = max(0.0, float(min_interval_s))
+            p['min_interval'] = max(0.0, float(min_interval_s))
         if hold_s is not None:
-            self.tempo_hold = max(0.0, float(hold_s))
+            p['hold'] = max(0.0, float(hold_s))
+        if auto is not None:
+            p['auto'] = bool(auto)
+        if k is not None:
+            p['k'] = max(0.0, float(k))
+
+    def get_tempo_params_for(self, key: str):
+        if not hasattr(self, '_tempo_params'):
+            return {}
+        return dict(self._tempo_params.get(key, {}))
 
     def _make_light(self) -> QLabel:
         lab = QLabel()
@@ -454,11 +473,22 @@ class VUMeterWidget(QWidget):
         s = self._tempo.get(key)
         if s is None:
             return
-        alpha = float(getattr(self, 'tempo_alpha', 0.2))
+        # Per-key params and history for optional auto threshold
+        p = getattr(self, '_tempo_params', {}).get(key, {'alpha':0.2,'delta':0.08,'min_interval':0.25,'hold':0.12,'auto':False,'k':0.6})
+        alpha = float(p.get('alpha', 0.2))
         s['env'] = (1.0 - alpha) * s['env'] + alpha * float(value)
-        delta = float(getattr(self, 'tempo_delta', 0.08))
-        min_interval = float(getattr(self, 'tempo_min_interval', 0.25))  # s
-        hold = float(getattr(self, 'tempo_hold', 0.12))  # s
+        hist = s.setdefault('hist', [])
+        hist.append(s['env'])
+        maxlen = s.setdefault('hist_maxlen', 120)
+        if len(hist) > maxlen:
+            del hist[0:len(hist)-maxlen]
+        if bool(p.get('auto')) and len(hist) >= 10:
+            std = float(np.std(hist))
+            delta = max(0.01, float(p.get('k', 0.6)) * std)
+        else:
+            delta = float(p.get('delta', 0.08))
+        min_interval = float(p.get('min_interval', 0.25))  # s
+        hold = float(p.get('hold', 0.12))  # s
         if float(value) > s['env'] + delta and (now - s['last_flash'] > min_interval):
             s['on_until'] = now + hold
             s['last_flash'] = now
@@ -543,6 +573,18 @@ class VUMeterApp(QMainWindow):
         self.fps_combo.currentIndexChanged.connect(self.on_fps_changed)
         device_layout.addWidget(fps_label)
         device_layout.addWidget(self.fps_combo)
+
+        # Tempo hedefi ve otomatik eşik
+        target_label = QLabel("Tempo Hedefi:")
+        self.tempo_target = QComboBox()
+        for key in ("L","R","Llow","Lmid","Lhigh","Rlow","Rmid","Rhigh"):
+            self.tempo_target.addItem(key, key)
+        self.tempo_target.currentIndexChanged.connect(self.on_tempo_target_changed)
+        self.tempo_auto = QCheckBox("Oto")
+        self.tempo_auto.stateChanged.connect(self.on_tempo_params_changed)
+        device_layout.addWidget(target_label)
+        device_layout.addWidget(self.tempo_target)
+        device_layout.addWidget(self.tempo_auto)
 
         # Tempo parametreleri (Eşik, Hold, Min, Alfa)
         thr_label = QLabel("Eşik:")
@@ -679,15 +721,34 @@ class VUMeterApp(QMainWindow):
 
     def on_tempo_params_changed(self):
         try:
+            target = self.tempo_target.currentData()
             alpha = float(self.tempo_alpha.value())
             delta = float(self.tempo_thr.value())
             hold_s = float(self.tempo_hold.value()) / 1000.0
             min_s = float(self.tempo_min.value()) / 1000.0
+            auto = bool(self.tempo_auto.isChecked())
         except Exception:
             return
         try:
-            self.vu_widget.set_tempo_params(alpha=alpha, delta=delta,
-                                            min_interval_s=min_s, hold_s=hold_s)
+            if target is None:
+                return
+            self.vu_widget.set_tempo_params_for(str(target), alpha=alpha, delta=delta,
+                                                min_interval_s=min_s, hold_s=hold_s,
+                                                auto=auto)
+        except Exception:
+            pass
+
+    def on_tempo_target_changed(self):
+        try:
+            target = self.tempo_target.currentData()
+            if target is None:
+                return
+            params = self.vu_widget.get_tempo_params_for(str(target))
+            self.tempo_alpha.setValue(float(params.get('alpha', 0.2)))
+            self.tempo_thr.setValue(float(params.get('delta', 0.08)))
+            self.tempo_min.setValue(float(params.get('min_interval', 0.25)) * 1000.0)
+            self.tempo_hold.setValue(float(params.get('hold', 0.12)) * 1000.0)
+            self.tempo_auto.setChecked(bool(params.get('auto', False)))
         except Exception:
             pass
 
