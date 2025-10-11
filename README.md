@@ -64,6 +64,9 @@ Yukarıdaki `pipwin` adımlarını uygulayın.
 - Menüyü “Yenile” ile güncelleyin
 - [Sistem] etiketli olanlar loopback, [Mikrofon] etiketli olanlar giriş cihazlarıdır
 
+## Sürüm ve Değişiklikler
+- Sürüm: 1.3.0 — bkz. `CHANGELOG.md`
+
 ## Lisans
 MIT License — detaylar için `LICENSE` dosyasına bakın.
 # Audio VU Meter GUI
@@ -147,4 +150,3 @@ Loglar:
 
 ## Lisans
 MIT License — ayrıntılar için `LICENSE` dosyasına bakın.
-
