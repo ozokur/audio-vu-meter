@@ -33,6 +33,7 @@ class AudioMonitor(QObject):
         self.chunk_size = 1024
         self.channels = 2
         self.device_index = None
+        self.use_loopback = False  # Sistem ses çıkışını dinle
         
         self.pa = None
         self.stream = None
@@ -44,18 +45,35 @@ class AudioMonitor(QObject):
             
             # Varsayılan giriş cihazını al
             if self.device_index is None:
-                self.device_index = self.pa.get_default_input_device_info()['index']
+                if self.use_loopback:
+                    # Loopback için varsayılan çıkış cihazını kullan
+                    self.device_index = self.pa.get_default_output_device_info()['index']
+                else:
+                    self.device_index = self.pa.get_default_input_device_info()['index']
+            
+            # Stream parametreleri
+            stream_params = {
+                'format': pyaudio.paInt16,
+                'channels': self.channels,
+                'rate': self.sample_rate,
+                'input': True,
+                'input_device_index': self.device_index,
+                'frames_per_buffer': self.chunk_size,
+                'stream_callback': self._audio_callback
+            }
+            
+            # WASAPI loopback için özel ayar (Windows)
+            if self.use_loopback:
+                try:
+                    # WASAPI host API için loopback flag'i ekle
+                    import platform
+                    if platform.system() == 'Windows':
+                        stream_params['as_loopback'] = True
+                except:
+                    pass
             
             # Stream aç
-            self.stream = self.pa.open(
-                format=pyaudio.paInt16,
-                channels=self.channels,
-                rate=self.sample_rate,
-                input=True,
-                input_device_index=self.device_index,
-                frames_per_buffer=self.chunk_size,
-                stream_callback=self._audio_callback
-            )
+            self.stream = self.pa.open(**stream_params)
             
             self.is_running = True
             self.stream.start_stream()
@@ -101,18 +119,34 @@ class AudioMonitor(QObject):
     
     @staticmethod
     def get_audio_devices():
-        """Mevcut ses kartlarını listele"""
+        """Mevcut ses kartlarını listele (input ve loopback)"""
         pa = pyaudio.PyAudio()
         devices = []
         
+        # Önce sistem çıkışını loopback olarak ekle (Windows için)
+        import platform
+        if platform.system() == 'Windows':
+            try:
+                default_output = pa.get_default_output_device_info()
+                devices.append({
+                    'index': default_output['index'],
+                    'name': '🔊 Sistem Ses Çıkışı (Loopback)',
+                    'channels': default_output['maxOutputChannels'],
+                    'is_loopback': True
+                })
+            except:
+                pass
+        
+        # Sonra normal input cihazlarını ekle
         for i in range(pa.get_device_count()):
             try:
                 info = pa.get_device_info_by_index(i)
                 if info['maxInputChannels'] > 0:  # Sadece giriş cihazları
                     devices.append({
                         'index': i,
-                        'name': info['name'],
-                        'channels': info['maxInputChannels']
+                        'name': f"🎤 {info['name']}",
+                        'channels': info['maxInputChannels'],
+                        'is_loopback': False
                     })
             except:
                 pass
@@ -259,7 +293,7 @@ class VUMeterApp(QMainWindow):
         layout = QVBoxLayout()
         
         # Başlık
-        title = QLabel("🎵 Gerçek Zamanlı VU Meter")
+        title = QLabel("🎵 Gerçek Zamanlı VU Meter - Mikrofon & Sistem Sesi")
         title.setStyleSheet("font-size: 16px; font-weight: bold; padding: 10px;")
         layout.addWidget(title)
         
@@ -314,15 +348,16 @@ class VUMeterApp(QMainWindow):
         for device in devices:
             self.device_combo.addItem(
                 f"{device['name']} ({device['channels']} kanal)",
-                device['index']
+                device  # Tüm device bilgisini data olarak sakla
             )
     
     def start_monitoring(self):
         """İzlemeyi başlat"""
         # Seçilen cihazı al
-        device_index = self.device_combo.currentData()
-        if device_index is not None:
-            self.audio_monitor.device_index = device_index
+        device_info = self.device_combo.currentData()
+        if device_info is not None:
+            self.audio_monitor.device_index = device_info['index']
+            self.audio_monitor.use_loopback = device_info.get('is_loopback', False)
         
         # Başlat
         self.audio_monitor.start()
@@ -331,7 +366,12 @@ class VUMeterApp(QMainWindow):
         self.start_button.setEnabled(False)
         self.stop_button.setEnabled(True)
         self.device_combo.setEnabled(False)
-        self.status_label.setText("🎤 Dinleniyor...")
+        
+        # Loopback ise farklı mesaj göster
+        if self.audio_monitor.use_loopback:
+            self.status_label.setText("🔊 Sistem sesi dinleniyor (Edge, YouTube vb.)...")
+        else:
+            self.status_label.setText("🎤 Mikrofon dinleniyor...")
         self.status_label.setStyleSheet("padding: 5px; background-color: #90EE90;")
     
     def stop_monitoring(self):

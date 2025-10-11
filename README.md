@@ -1,10 +1,12 @@
 # 🎵 Audio VU Meter GUI
 
-Ses kartından gerçek zamanlı ses seviyesi (VU - Volume Unit) verisi okuyup hızlı ve görsel bir şekilde gösteren Python uygulaması.
+Ses kartından gerçek zamanlı ses seviyesi (VU - Volume Unit) verisi okuyup hızlı ve görsel bir şekilde gösteren Python uygulaması. Hem mikrofon girişini hem de **sistem ses çıkışını** (Edge browser, YouTube, müzik çalar vb.) izleyebilir!
 
 ## 🎯 Özellikler
 
 - 🎤 **Gerçek Zamanlı Ses Girişi**: PyAudio ile ses kartından canlı veri okuma
+- 🔊 **Sistem Ses Çıkışı Dinleme**: Windows WASAPI loopback ile browser, YouTube, Spotify gibi uygulamaların sesini izleyin
+- 🌐 **Edge Browser Desteği**: Tarayıcınızda çalan müzik/video seslerini gerçek zamanlı görselleştirin
 - 📊 **Hızlı VU Meter Gösterimi**: Düşük latency ile anlık ses seviyesi
 - 🎨 **Modern GUI**: PyQt5 ile kullanıcı dostu arayüz
 - 📈 **Görsel Göstergeler**: 
@@ -13,7 +15,7 @@ Ses kartından gerçek zamanlı ses seviyesi (VU - Volume Unit) verisi okuyup h�
   - dB seviyesi
   - Stereo (Sol/Sağ) kanal ayrı gösterimi
 - ⚡ **Yüksek Performans**: Threading ile optimize edilmiş
-- 🎛️ **Ayarlanabilir**: Ses kartı seçimi, hassasiyet ayarı
+- 🎛️ **Ayarlanabilir**: Ses kartı seçimi, loopback/mikrofon seçimi
 
 ## 📋 Gereksinimler
 
@@ -25,7 +27,7 @@ Ses kartından gerçek zamanlı ses seviyesi (VU - Volume Unit) verisi okuyup h�
 
 ### 1. Repository'yi klonlayın:
 ```bash
-git clone https://github.com/KULLANICI_ADI/audio-vu-meter.git
+git clone https://github.com/ozokur/audio-vu-meter.git
 cd audio-vu-meter
 ```
 
@@ -53,20 +55,19 @@ python vu_meter.py
 python vu_meter.py
 ```
 
-### Gelişmiş Seçenekler
-```bash
-# Belirli ses kartı seçimi
-python vu_meter.py --device 0
+Uygulama açıldığında:
+1. **Ses Kartı** açılır menüsünden kaynağı seçin:
+   - 🔊 **Sistem Ses Çıkışı (Loopback)**: Edge browser, YouTube, Spotify vb. tüm sistem seslerini dinler
+   - 🎤 **Mikrofon**: Fiziksel mikrofon girişini dinler
+2. **▶ Başlat** butonuna basın
+3. Edge'de YouTube/müzik açın veya mikrofona konuşun
+4. VU meter gerçek zamanlı ses seviyesini gösterecektir!
 
-# Hassasiyet ayarı
-python vu_meter.py --sensitivity high
-
-# Düşük latency modu
-python vu_meter.py --low-latency
-
-# Tüm seçenekleri göster
-python vu_meter.py --help
-```
+### İpuçları
+- 🌐 **Browser Sesi İçin**: "🔊 Sistem Ses Çıkışı (Loopback)" seçeneğini seçin
+- 🎤 **Mikrofon İçin**: Listeden mikrofonunuzu seçin
+- 📊 **dB Değerleri**: -60 dB sessizlik, 0 dB maksimum
+- ⚡ **Peak Göstergesi**: En yüksek seviyeyi gösterir
 
 ## 🖼️ Ekran Görüntüleri
 
@@ -145,6 +146,12 @@ audio-vu-meter/
 
 ## ⚠️ Sorun Giderme
 
+### Sistem Sesi Dinlenmiyor (Loopback)
+Windows'ta loopback özelliği WASAPI ile çalışır. Eğer ses gelmiyor ise:
+- Windows ses ayarlarında "Stereo Mix" veya "What U Hear" özelliğinin etkin olduğundan emin olun
+- Ses çıkış cihazının aktif ve ses çalıyor olması gerekir
+- Edge'de veya başka bir uygulamada ses çalın ve tekrar deneyin
+
 ### PyAudio Kurulum Hatası (Windows)
 ```bash
 # Wheel dosyasını manuel indirin ve kurun
@@ -153,10 +160,9 @@ pipwin install pyaudio
 ```
 
 ### Ses Kartı Bulunamıyor
-```bash
-# Mevcut ses kartlarını listele
-python vu_meter.py --list-devices
-```
+Uygulamayı başlattığınızda "Ses Kartı" açılır menüsünden cihazları görebilirsiniz.
+- 🔊 işaretli olan sistem ses çıkışıdır (loopback)
+- 🎤 işaretli olanlar mikrofon girişleridir
 
 ### Yüksek Latency
 - Chunk size'ı azaltın (512 veya 256)
