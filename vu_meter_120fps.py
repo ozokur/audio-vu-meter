@@ -827,7 +827,7 @@ class VUMeterApp(QMainWindow):
             L,
             R,
         ]
-        # Overlay beat: set MSB when beat is active for that target
+        # Overlay beat: set LSB (0x01) when beat is active for that target
         try:
             keys = ['Llow','Lmid','Lhigh','Rlow','Rmid','Rhigh','L','R']
             now = time.monotonic()
@@ -835,7 +835,8 @@ class VUMeterApp(QMainWindow):
             for i, k in enumerate(keys):
                 s = tempo.get(k)
                 if s and now < float(s.get('on_until', 0.0)):
-                    bytes_list[i] = (int(bytes_list[i]) & 0x7F) | 0x80
+                    # Ensure the lowest bit is set to indicate beat, do not touch MSB
+                    bytes_list[i] = int(bytes_list[i]) | 0x01
         except Exception:
             pass
         return bytes_list
