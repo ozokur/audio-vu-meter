@@ -204,6 +204,8 @@ class VUMeterWidget(QWidget):
         self.peak_left = 0.0
         self.peak_right = 0.0
         self.min_db = -60.0
+        self.peak_hold_ms = 1000
+        self.peak_decay_dbps = 10.0  # dB per second decay after hold
         self.bands = [0.0] * 6  # Llow, Lmid, Lhigh, Rlow, Rmid, Rhigh
         # Tempo parametreleri
         self.tempo_alpha = 0.20
@@ -351,6 +353,12 @@ class VUMeterWidget(QWidget):
         layout.addLayout(ctl_row)
         self.setLayout(layout)
 
+    def on_peak_hold_changed(self):
+        try:
+            self.set_peak_hold_ms(int(self.peak_hold_spin.value()))
+        except Exception:
+            pass
+
     @staticmethod
     def _linear_to_db(linear: float) -> float:
         if linear > 1e-12:
@@ -383,26 +391,31 @@ class VUMeterWidget(QWidget):
         self.left_level = _s(left)
         self.right_level = _s(right)
 
-        # Peak-and-hold per channel
+        # Peak-and-hold per channel with slow decay after hold
         now = time.monotonic()
         hold_s = getattr(self, 'peak_hold_ms', 1000) / 1000.0 if hasattr(self, 'peak_hold_ms') else 1.0
+        if not hasattr(self, '_last_peak_t'):
+            self._last_peak_t = now
+        dt = max(0.0, now - self._last_peak_t)
         if not hasattr(self, '_peak_l_val'):
             self._peak_l_val = 0.0
             self._peak_r_val = 0.0
             self._peak_l_until = 0.0
             self._peak_r_until = 0.0
+        decay_a = 10.0 ** (-(getattr(self, 'peak_decay_dbps', 10.0)) * dt / 20.0)
         # Left
         if self.left_level > self._peak_l_val:
             self._peak_l_val = self.left_level
             self._peak_l_until = now + hold_s
         elif now > self._peak_l_until and self.left_level < self._peak_l_val:
-            self._peak_l_val = self.left_level
+            self._peak_l_val = max(self.left_level, self._peak_l_val * decay_a)
         # Right
         if self.right_level > self._peak_r_val:
             self._peak_r_val = self.right_level
             self._peak_r_until = now + hold_s
         elif now > self._peak_r_until and self.right_level < self._peak_r_val:
-            self._peak_r_val = self.right_level
+            self._peak_r_val = max(self.right_level, self._peak_r_val * decay_a)
+        self._last_peak_t = now
 
         self.peak_left = max(self.peak_left * 0.95, self.left_level)
         self.peak_right = max(self.peak_right * 0.95, self.right_level)
@@ -453,6 +466,24 @@ class VUMeterWidget(QWidget):
             return
         self.bands = [float(x) if np.isfinite(x) and x >= 0 else 0.0 for x in bands_tuple]
 
+        # Peak-and-hold for bands with slow decay
+        now = time.monotonic()
+        hold_s = getattr(self, 'peak_hold_ms', 1000) / 1000.0 if hasattr(self, 'peak_hold_ms') else 1.0
+        if not hasattr(self, '_band_peak_vals'):
+            self._band_peak_vals = [0.0]*6
+            self._band_peak_until = [0.0]*6
+            self._band_last_t = now
+        dt = max(0.0, now - getattr(self, '_band_last_t', now))
+        decay_a = 10.0 ** (-(getattr(self, 'peak_decay_dbps', 10.0)) * dt / 20.0)
+        for i in range(6):
+            cur = self.bands[i]
+            if cur > self._band_peak_vals[i]:
+                self._band_peak_vals[i] = cur
+                self._band_peak_until[i] = now + hold_s
+            elif now > self._band_peak_until[i] and cur < self._band_peak_vals[i]:
+                self._band_peak_vals[i] = max(cur, self._band_peak_vals[i] * decay_a)
+        self._band_last_t = now
+
         def _db_to_percent(dbv: float) -> int:
             if not np.isfinite(dbv):
                 return 0
@@ -465,7 +496,8 @@ class VUMeterWidget(QWidget):
             return int(round((dbv - bottom) / (top - bottom) * 100))
 
         Llow, Lmid, Lhigh, Rlow, Rmid, Rhigh = self.bands
-        vals = [Llow, Lmid, Lhigh, Rlow, Rmid, Rhigh]
+        # Use peak-hold values for display
+        vals = list(self._band_peak_vals)
         dbs = [self._linear_to_db(v) for v in vals]
         perc = [_db_to_percent(d) for d in dbs]
 
