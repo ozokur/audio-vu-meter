@@ -402,19 +402,26 @@ class VUMeterWidget(QWidget):
             self._peak_r_val = 0.0
             self._peak_l_until = 0.0
             self._peak_r_until = 0.0
-        decay_a = 10.0 ** (-(getattr(self, 'peak_decay_dbps', 10.0)) * dt / 20.0)
-        # Left
-        if self.left_level > self._peak_l_val:
+        # If hold is zero, behave instantaneous (no hold/decay)
+        if hold_s <= 0.0:
             self._peak_l_val = self.left_level
-            self._peak_l_until = now + hold_s
-        elif now > self._peak_l_until and self.left_level < self._peak_l_val:
-            self._peak_l_val = max(self.left_level, self._peak_l_val * decay_a)
-        # Right
-        if self.right_level > self._peak_r_val:
             self._peak_r_val = self.right_level
-            self._peak_r_until = now + hold_s
-        elif now > self._peak_r_until and self.right_level < self._peak_r_val:
-            self._peak_r_val = max(self.right_level, self._peak_r_val * decay_a)
+            self._peak_l_until = now
+            self._peak_r_until = now
+        else:
+            decay_a = 10.0 ** (-(getattr(self, 'peak_decay_dbps', 10.0)) * dt / 20.0)
+            # Left
+            if self.left_level > self._peak_l_val:
+                self._peak_l_val = self.left_level
+                self._peak_l_until = now + hold_s
+            elif now > self._peak_l_until and self.left_level < self._peak_l_val:
+                self._peak_l_val = max(self.left_level, self._peak_l_val * decay_a)
+            # Right
+            if self.right_level > self._peak_r_val:
+                self._peak_r_val = self.right_level
+                self._peak_r_until = now + hold_s
+            elif now > self._peak_r_until and self.right_level < self._peak_r_val:
+                self._peak_r_val = max(self.right_level, self._peak_r_val * decay_a)
         self._last_peak_t = now
 
         self.peak_left = max(self.peak_left * 0.95, self.left_level)
@@ -474,14 +481,20 @@ class VUMeterWidget(QWidget):
             self._band_peak_until = [0.0]*6
             self._band_last_t = now
         dt = max(0.0, now - getattr(self, '_band_last_t', now))
-        decay_a = 10.0 ** (-(getattr(self, 'peak_decay_dbps', 10.0)) * dt / 20.0)
-        for i in range(6):
-            cur = self.bands[i]
-            if cur > self._band_peak_vals[i]:
-                self._band_peak_vals[i] = cur
-                self._band_peak_until[i] = now + hold_s
-            elif now > self._band_peak_until[i] and cur < self._band_peak_vals[i]:
-                self._band_peak_vals[i] = max(cur, self._band_peak_vals[i] * decay_a)
+        if hold_s <= 0.0:
+            # Instantaneous behavior for bands
+            for i in range(6):
+                self._band_peak_vals[i] = self.bands[i]
+                self._band_peak_until[i] = now
+        else:
+            decay_a = 10.0 ** (-(getattr(self, 'peak_decay_dbps', 10.0)) * dt / 20.0)
+            for i in range(6):
+                cur = self.bands[i]
+                if cur > self._band_peak_vals[i]:
+                    self._band_peak_vals[i] = cur
+                    self._band_peak_until[i] = now + hold_s
+                elif now > self._band_peak_until[i] and cur < self._band_peak_vals[i]:
+                    self._band_peak_vals[i] = max(cur, self._band_peak_vals[i] * decay_a)
         self._band_last_t = now
 
         def _db_to_percent(dbv: float) -> int:
