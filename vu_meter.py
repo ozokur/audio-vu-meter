@@ -20,7 +20,7 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import QTimer, pyqtSignal, QObject
 
-__version__ = "1.3.0"
+__version__ = "1.4.0"
 __author__ = "Audio VU Meter Team"
 
 # Logging setup

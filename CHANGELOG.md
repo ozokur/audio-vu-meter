@@ -24,4 +24,6 @@ This project uses Semantic Versioning (MAJOR.MINOR.PATCH) and a Keep a Changelog
 
 ## [1.0.0] - 2025-10-11
 - Initial GUI with basic stereo VU, peak display, device selection.
+## [1.4.0] - 2025-10-11
+- Enable auto beat detection by default on all channels/bands (L, R, Llow/Lmid/Lhigh, Rlow/Rmid/Rhigh) with tuned parameters (alpha=0.15, k=0.8, min=0.20s, hold=0.10s).
 

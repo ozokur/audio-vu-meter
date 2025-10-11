@@ -1,152 +1,153 @@
-# Audio VU Meter GUI
+﻿# Audio VU Meter GUI
 
-Ses kartından gerçek zamanlı ses seviyesi (VU - Volume Unit) verisini okuyup hızlı ve görsel şekilde gösteren bir Python uygulaması. Hem mikrofon girişini hem de sistem ses çıkışını (Edge, YouTube, müzik çalar vb.) izleyebilirsiniz.
+Ses kartÄ±ndan gerÃ§ek zamanlÄ± ses seviyesi (VU - Volume Unit) verisini okuyup hÄ±zlÄ± ve gÃ¶rsel ÅŸekilde gÃ¶steren bir Python uygulamasÄ±. Hem mikrofon giriÅŸini hem de sistem ses Ã§Ä±kÄ±ÅŸÄ±nÄ± (Edge, YouTube, mÃ¼zik Ã§alar vb.) izleyebilirsiniz.
 
-## Özellikler
-- Gerçek zamanlı ses girişi (PyAudio)
-- Sistem ses çıkışı (WASAPI loopback) dinleme
-- Düşük gecikmeli, modern PyQt5 arayüz
-- Görsel göstergeler: VU çubuğu, peak, dB, stereo (Sol/Sağ)
-- Ayarlanabilir cihaz/loopback seçimi
+## Ã–zellikler
+- GerÃ§ek zamanlÄ± ses giriÅŸi (PyAudio)
+- Sistem ses Ã§Ä±kÄ±ÅŸÄ± (WASAPI loopback) dinleme
+- DÃ¼ÅŸÃ¼k gecikmeli, modern PyQt5 arayÃ¼z
+- GÃ¶rsel gÃ¶stergeler: VU Ã§ubuÄŸu, peak, dB, stereo (Sol/SaÄŸ)
+- Ayarlanabilir cihaz/loopback seÃ§imi
 
 ## Gereksinimler
 - Python 3.7+
 - Windows/macOS/Linux
-- Mikrofon veya line-in girişi (loopback için Windows önerilir)
+- Mikrofon veya line-in giriÅŸi (loopback iÃ§in Windows Ã¶nerilir)
 
 ## Kurulum
-1) Gerekli paketleri yükleyin:
+1) Gerekli paketleri yÃ¼kleyin:
 
 ```
 pip install -r requirements.txt
 ```
 
-Windows’ta PyAudio kurulumu hata verirse:
+Windowsâ€™ta PyAudio kurulumu hata verirse:
 
 ```
 pip install pipwin
 pipwin install pyaudio
 ```
 
-2) Uygulamayı çalıştırın:
+2) UygulamayÄ± Ã§alÄ±ÅŸtÄ±rÄ±n:
 
 ```
 python vu_meter.py
 ```
 
-## Kullanım
-1. “Ses Kartı” menüsünden kaynağı seçin:
-   - Sistem Ses Çıkışı (Loopback): Edge, YouTube, Spotify vb. tüm sistem sesleri
-   - Mikrofon: Fiziksel mikrofon girişi
-2. “Başlat”a basın
-3. Müzik çalın veya mikrofona konuşun; VU meter anlık seviyeyi gösterir
+## KullanÄ±m
+1. â€œSes KartÄ±â€ menÃ¼sÃ¼nden kaynaÄŸÄ± seÃ§in:
+   - Sistem Ses Ã‡Ä±kÄ±ÅŸÄ± (Loopback): Edge, YouTube, Spotify vb. tÃ¼m sistem sesleri
+   - Mikrofon: Fiziksel mikrofon giriÅŸi
+2. â€œBaÅŸlatâ€a basÄ±n
+3. MÃ¼zik Ã§alÄ±n veya mikrofona konuÅŸun; VU meter anlÄ±k seviyeyi gÃ¶sterir
 
-## İpuçları
-- Tarayıcı sesi için “Sistem Ses Çıkışı (Loopback)” seçeneğini kullanın
-- dB referansı: ~-60 dB sessiz, 0 dB maksimuma yakın
-- Peak göstergesi en yüksek seviyeyi gösterir
+## Ä°puÃ§larÄ±
+- TarayÄ±cÄ± sesi iÃ§in â€œSistem Ses Ã‡Ä±kÄ±ÅŸÄ± (Loopback)â€ seÃ§eneÄŸini kullanÄ±n
+- dB referansÄ±: ~-60 dB sessiz, 0 dB maksimuma yakÄ±n
+- Peak gÃ¶stergesi en yÃ¼ksek seviyeyi gÃ¶sterir
 
 ## Teknik Notlar
-- Örnekleme hızı: 44.1 kHz (ayarlanabilir)
+- Ã–rnekleme hÄ±zÄ±: 44.1 kHz (ayarlanabilir)
 - Chunk boyutu: 1024 samples
-- RMS ve peak hesaplama, dB dönüşümü
-- Ayrı ses okuma thread’i, ~60 FPS GUI güncelleme
+- RMS ve peak hesaplama, dB dÃ¶nÃ¼ÅŸÃ¼mÃ¼
+- AyrÄ± ses okuma threadâ€™i, ~60 FPS GUI gÃ¼ncelleme
 
 ## Sorun Giderme
 ### Sistem sesi gelmiyor (Loopback)
-- Windows’ta WASAPI loopback gerekir; ses çıkışı aktifken deneyin
-- “Stereo Mix/What U Hear” türü seçenekler açık olmalı (bazı cihazlarda)
+- Windowsâ€™ta WASAPI loopback gerekir; ses Ã§Ä±kÄ±ÅŸÄ± aktifken deneyin
+- â€œStereo Mix/What U Hearâ€ tÃ¼rÃ¼ seÃ§enekler aÃ§Ä±k olmalÄ± (bazÄ± cihazlarda)
 
 ### PyAudio kurulumu (Windows)
-Yukarıdaki `pipwin` adımlarını uygulayın.
+YukarÄ±daki `pipwin` adÄ±mlarÄ±nÄ± uygulayÄ±n.
 
-### Cihaz görünmüyor
-- Menüyü “Yenile” ile güncelleyin
-- [Sistem] etiketli olanlar loopback, [Mikrofon] etiketli olanlar giriş cihazlarıdır
+### Cihaz gÃ¶rÃ¼nmÃ¼yor
+- MenÃ¼yÃ¼ â€œYenileâ€ ile gÃ¼ncelleyin
+- [Sistem] etiketli olanlar loopback, [Mikrofon] etiketli olanlar giriÅŸ cihazlarÄ±dÄ±r
 
-## Sürüm ve Değişiklikler
-- Sürüm: 1.3.0 — bkz. `CHANGELOG.md`
+## SÃ¼rÃ¼m ve DeÄŸiÅŸiklikler
+- SÃ¼rÃ¼m: 1.3.0 â€” bkz. `CHANGELOG.md`
 
 ## Lisans
-MIT License — detaylar için `LICENSE` dosyasına bakın.
+MIT License â€” detaylar iÃ§in `LICENSE` dosyasÄ±na bakÄ±n.
 # Audio VU Meter GUI
 
-Gerçek zamanlı ses seviyesi (VU) ölçümü ve görselleştirmesi yapan bir Python uygulaması. Hem mikrofon girişini hem de Windows’ta WASAPI loopback ile sistem ses çıkışını (Edge, YouTube, müzik çalar vb.) izleyebilirsiniz.
+GerÃ§ek zamanlÄ± ses seviyesi (VU) Ã¶lÃ§Ã¼mÃ¼ ve gÃ¶rselleÅŸtirmesi yapan bir Python uygulamasÄ±. Hem mikrofon giriÅŸini hem de Windowsâ€™ta WASAPI loopback ile sistem ses Ã§Ä±kÄ±ÅŸÄ±nÄ± (Edge, YouTube, mÃ¼zik Ã§alar vb.) izleyebilirsiniz.
 
-## Öne Çıkanlar
-- Gerçek zamanlı ölçüm (PyAudio/pyaudiowpatch)
-- Sistem ses çıkışı (WASAPI loopback) dinleme
-- Modern PyQt5 arayüz, düşük gecikme
-- dB aralığı seçimi (örn. −90/−60/−48/−40/−30 dB)
+## Ã–ne Ã‡Ä±kanlar
+- GerÃ§ek zamanlÄ± Ã¶lÃ§Ã¼m (PyAudio/pyaudiowpatch)
+- Sistem ses Ã§Ä±kÄ±ÅŸÄ± (WASAPI loopback) dinleme
+- Modern PyQt5 arayÃ¼z, dÃ¼ÅŸÃ¼k gecikme
+- dB aralÄ±ÄŸÄ± seÃ§imi (Ã¶rn. âˆ’90/âˆ’60/âˆ’48/âˆ’40/âˆ’30 dB)
 - Ayarlanabilir FPS (30/60/120/240)
-- 6 bant (L/R Low–Mid–High) barları ve per‑bant dB
-- Tempo ışıkları: her kanal/bantta seviye darbelerine göre yanıp sönme
+- 6 bant (L/R Lowâ€“Midâ€“High) barlarÄ± ve perâ€‘bant dB
+- Tempo Ä±ÅŸÄ±klarÄ±: her kanal/bantta seviye darbelerine gÃ¶re yanÄ±p sÃ¶nme
 - BPM tahmini (L/R)
-- Döner dosya log’u: `audio_vu_meter.log`
+- DÃ¶ner dosya logâ€™u: `audio_vu_meter.log`
 
-## Hızlı Başlangıç
-1) Bağımlılıkları yükleyin
+## HÄ±zlÄ± BaÅŸlangÄ±Ã§
+1) BaÄŸÄ±mlÄ±lÄ±klarÄ± yÃ¼kleyin
 
 ```
 pip install -r requirements.txt
 ```
 
-Windows’ta PyAudio kurulumu hata verirse:
+Windowsâ€™ta PyAudio kurulumu hata verirse:
 
 ```
 pip install pipwin
 pipwin install pyaudio
 ```
 
-2) Çalıştırın (Gelişmiş, 120 FPS + 6 bant + tempo/BPM):
+2) Ã‡alÄ±ÅŸtÄ±rÄ±n (GeliÅŸmiÅŸ, 120 FPS + 6 bant + tempo/BPM):
 
 ```
 python vu_meter_120fps.py
 ```
 
-Alternatif (Temel sürüm):
+Alternatif (Temel sÃ¼rÃ¼m):
 
 ```
 python vu_meter.py
 ```
 
-## Kullanım
-- “Ses Kartı” menüsünden kaynak seçin:
-  - [Sistem] … (Loopback): Tüm sistem seslerini dinler
-  - [Mikrofon] …: Fiziksel mikrofon girişini dinler
-- Aralık: VU çubuğunun dB alt sınırını seçer (0 dB tepe referansı)
-- FPS: Arayüz güncelleme hızını ayarlar (CPU/GPU yüküyle dengeli seçin)
+## KullanÄ±m
+- â€œSes KartÄ±â€ menÃ¼sÃ¼nden kaynak seÃ§in:
+  - [Sistem] â€¦ (Loopback): TÃ¼m sistem seslerini dinler
+  - [Mikrofon] â€¦: Fiziksel mikrofon giriÅŸini dinler
+- AralÄ±k: VU Ã§ubuÄŸunun dB alt sÄ±nÄ±rÄ±nÄ± seÃ§er (0 dB tepe referansÄ±)
+- FPS: ArayÃ¼z gÃ¼ncelleme hÄ±zÄ±nÄ± ayarlar (CPU/GPU yÃ¼kÃ¼yle dengeli seÃ§in)
 - Tempo parametreleri (vu_meter_120fps.py):
-  - Eşik (delta): Darbe tespiti hassasiyeti (0–1)
-  - Hold ms: Işığın açık kalma süresi
-  - Min ms: Darbeler arası minimum süre
-  - Alfa: Zarf (envelope) yumuşatma katsayısı
+  - EÅŸik (delta): Darbe tespiti hassasiyeti (0â€“1)
+  - Hold ms: IÅŸÄ±ÄŸÄ±n aÃ§Ä±k kalma sÃ¼resi
+  - Min ms: Darbeler arasÄ± minimum sÃ¼re
+  - Alfa: Zarf (envelope) yumuÅŸatma katsayÄ±sÄ±
 
-6 bant görünümü (vu_meter_120fps.py):
-- L/R için Low (20–250 Hz), Mid (250–4000 Hz), High (4–20 kHz)
-- Her bant için dB değeri ve tempo ışığı
-- L/R genel satırlarında BPM tahmini etiketi
+6 bant gÃ¶rÃ¼nÃ¼mÃ¼ (vu_meter_120fps.py):
+- L/R iÃ§in Low (20â€“250 Hz), Mid (250â€“4000 Hz), High (4â€“20 kHz)
+- Her bant iÃ§in dB deÄŸeri ve tempo Ä±ÅŸÄ±ÄŸÄ±
+- L/R genel satÄ±rlarÄ±nda BPM tahmini etiketi
 
 ## Teknik Notlar
-- Örnekleme hızı: 44.1 kHz (cihaz varsayılanına uyarlanır)
-- Chunk boyutu: 256 (120 FPS akıcılık için)
-- RMS ve peak hesaplama; VU çubuğu dB → yüzde haritalaması (min_dB..0 dB)
-- FFT (RFFT + Hann) ile bant güçlerinden RMS tahmini
+- Ã–rnekleme hÄ±zÄ±: 44.1 kHz (cihaz varsayÄ±lanÄ±na uyarlanÄ±r)
+- Chunk boyutu: 256 (120 FPS akÄ±cÄ±lÄ±k iÃ§in)
+- RMS ve peak hesaplama; VU Ã§ubuÄŸu dB â†’ yÃ¼zde haritalamasÄ± (min_dB..0 dB)
+- FFT (RFFT + Hann) ile bant gÃ¼Ã§lerinden RMS tahmini
 
 ## Sorun Giderme
 Sistem sesi gelmiyor (Loopback):
-- Windows’ta WASAPI loopback gerekir; ses çıkışı aktifken deneyin
-- Bazı cihazlarda “Stereo Mix/What U Hear” benzeri seçenekleri etkinleştirin
+- Windowsâ€™ta WASAPI loopback gerekir; ses Ã§Ä±kÄ±ÅŸÄ± aktifken deneyin
+- BazÄ± cihazlarda â€œStereo Mix/What U Hearâ€ benzeri seÃ§enekleri etkinleÅŸtirin
 
 PyAudio kurulumu (Windows):
-- `pipwin install pyaudio` kullanın (öncesinde `pip install pipwin`)
+- `pipwin install pyaudio` kullanÄ±n (Ã¶ncesinde `pip install pipwin`)
 
-Cihaz görünmüyor:
-- “Yenile” ile listeyi güncelleyin
-- [Sistem] etiketi loopback, [Mikrofon] etiketi giriş cihazıdır
+Cihaz gÃ¶rÃ¼nmÃ¼yor:
+- â€œYenileâ€ ile listeyi gÃ¼ncelleyin
+- [Sistem] etiketi loopback, [Mikrofon] etiketi giriÅŸ cihazÄ±dÄ±r
 
 Loglar:
-- Hatalar ve önemli bilgiler `audio_vu_meter.log` dosyasına yazılır
+- Hatalar ve Ã¶nemli bilgiler `audio_vu_meter.log` dosyasÄ±na yazÄ±lÄ±r
 
 ## Lisans
-MIT License — ayrıntılar için `LICENSE` dosyasına bakın.
+MIT License â€” ayrÄ±ntÄ±lar iÃ§in `LICENSE` dosyasÄ±na bakÄ±n.
+

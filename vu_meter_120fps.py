@@ -20,7 +20,7 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import QTimer, pyqtSignal, QObject
 
-__version__ = "1.3.0"
+__version__ = "1.4.0"
 
 
 # Logging
@@ -227,17 +227,16 @@ class VUMeterWidget(QWidget):
             self._tempo[k]['hist_maxlen'] = 120
         self._tempo_params = {kk: {'alpha': 0.20, 'delta': 0.08, 'min_interval': 0.25, 'hold': 0.12, 'auto': False, 'k': 0.6}
                               for kk in self._tempo.keys()}
-        # High (tiz) kanallar için otomatik eşik ayarı varsayılan olarak açık
-        # Daha hızlı tepki ve yüksek frekans için hafif farklı parametreler
-        for hk in ('Lhigh', 'Rhigh'):
-            if hk in self._tempo_params:
-                self._tempo_params[hk].update({
-                    'auto': True,      # otomatik delta kullan
-                    'alpha': 0.15,     # biraz daha hızlı envelope
-                    'k': 0.8,          # std çarpanı (daha hassas)
-                    'min_interval': 0.20,
-                    'hold': 0.10,
-                })
+        # Tüm kanallar/bantlar için (L, R, Llow/Lmid/Lhigh, Rlow/Rmid/Rhigh)
+        # otomatik eşik ve hızlı tepki parametrelerini varsayılan yap
+        for key in list(self._tempo_params.keys()):
+            self._tempo_params[key].update({
+                'auto': True,   # otomatik delta kullan
+                'alpha': 0.15,  # biraz daha hızlı envelope
+                'k': 0.8,       # std çarpanı (daha hassas)
+                'min_interval': 0.20,
+                'hold': 0.10,
+            })
         self._init_ui()
 
     def _init_ui(self):
