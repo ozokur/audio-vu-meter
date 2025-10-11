@@ -7,7 +7,10 @@ Ses kartından gerçek zamanlı VU verisi okuyup görselleştiren uygulama
 
 import sys
 import numpy as np
-import pyaudio
+try:
+    import pyaudiowpatch as pyaudio
+except ImportError:
+    import pyaudio
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QPushButton, QLabel, QComboBox, QProgressBar)
 from PyQt5.QtCore import QTimer, pyqtSignal, QObject
@@ -45,32 +48,21 @@ class AudioMonitor(QObject):
             
             # Varsayılan giriş cihazını al
             if self.device_index is None:
-                if self.use_loopback:
-                    # Loopback için varsayılan çıkış cihazını kullan
-                    self.device_index = self.pa.get_default_output_device_info()['index']
-                else:
-                    self.device_index = self.pa.get_default_input_device_info()['index']
+                self.device_index = self.pa.get_default_input_device_info()['index']
+            
+            # Seçilen cihaz bilgisini al
+            device_info = self.pa.get_device_info_by_index(self.device_index)
             
             # Stream parametreleri
             stream_params = {
                 'format': pyaudio.paInt16,
                 'channels': self.channels,
-                'rate': self.sample_rate,
+                'rate': int(device_info['defaultSampleRate']),
                 'input': True,
                 'input_device_index': self.device_index,
                 'frames_per_buffer': self.chunk_size,
                 'stream_callback': self._audio_callback
             }
-            
-            # WASAPI loopback için özel ayar (Windows)
-            if self.use_loopback:
-                try:
-                    # WASAPI host API için loopback flag'i ekle
-                    import platform
-                    if platform.system() == 'Windows':
-                        stream_params['as_loopback'] = True
-                except:
-                    pass
             
             # Stream aç
             self.stream = self.pa.open(**stream_params)
@@ -123,25 +115,42 @@ class AudioMonitor(QObject):
         pa = pyaudio.PyAudio()
         devices = []
         
-        # Önce sistem çıkışını loopback olarak ekle (Windows için)
+        # Windows için WASAPI loopback cihazlarını bul
         import platform
         if platform.system() == 'Windows':
             try:
-                default_output = pa.get_default_output_device_info()
-                devices.append({
-                    'index': default_output['index'],
-                    'name': '🔊 Sistem Ses Çıkışı (Loopback)',
-                    'channels': default_output['maxOutputChannels'],
-                    'is_loopback': True
-                })
-            except:
-                pass
+                # pyaudiowpatch ile WASAPI loopback'i bul
+                wasapi_info = pa.get_host_api_info_by_type(pyaudio.paWASAPI)
+                
+                # Varsayılan WASAPI loopback cihazını bul
+                default_speakers = pa.get_device_info_by_index(wasapi_info["defaultOutputDevice"])
+                
+                # Loopback versiyonunu kontrol et
+                if not default_speakers["isLoopbackDevice"]:
+                    for loopback in pa.get_loopback_device_info_generator():
+                        if default_speakers["name"] in loopback["name"]:
+                            devices.append({
+                                'index': loopback['index'],
+                                'name': f"🔊 {loopback['name']}",
+                                'channels': loopback['maxInputChannels'],
+                                'is_loopback': True
+                            })
+                            break
+                else:
+                    devices.append({
+                        'index': default_speakers['index'],
+                        'name': f"🔊 {default_speakers['name']}",
+                        'channels': default_speakers['maxInputChannels'],
+                        'is_loopback': True
+                    })
+            except Exception as e:
+                print(f"WASAPI loopback bulunamadı: {e}")
         
         # Sonra normal input cihazlarını ekle
         for i in range(pa.get_device_count()):
             try:
                 info = pa.get_device_info_by_index(i)
-                if info['maxInputChannels'] > 0:  # Sadece giriş cihazları
+                if info['maxInputChannels'] > 0 and not info.get('isLoopbackDevice', False):
                     devices.append({
                         'index': i,
                         'name': f"🎤 {info['name']}",

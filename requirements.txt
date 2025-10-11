@@ -1,8 +1,8 @@
 # Audio VU Meter Requirements
 # Python 3.7+
 
-# Ses kartı I/O
-pyaudio>=0.2.11
+# Ses kartı I/O - Windows WASAPI loopback desteği ile
+pyaudiowpatch>=0.2.12.5
 
 # GUI Framework
 PyQt5>=5.15.0
