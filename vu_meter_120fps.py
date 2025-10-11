@@ -648,6 +648,35 @@ class VUMeterApp(QMainWindow):
         device_layout.addStretch()
         layout.addLayout(device_layout)
 
+        # Inline LED bit panel (8 bytes) with labels
+        inline_led = QVBoxLayout()
+        inline_header = QLabel("LED Bytes (Inline)")
+        inline_header.setStyleSheet("font-weight:bold; padding:4px;")
+        inline_led.addWidget(inline_header)
+        self.inline_led_rows = []
+        self._inline_mapping = [
+            ("B0", "L Low"), ("B1", "L Mid"), ("B2", "L High"),
+            ("B3", "R Low"), ("B4", "R Mid"), ("B5", "R High"),
+            ("B6", "L"),     ("B7", "R")
+        ]
+        for i in range(8):
+            r = QHBoxLayout()
+            r.addWidget(QLabel(f"{self._inline_mapping[i][0]} ({self._inline_mapping[i][1]}):"))
+            bits = []
+            for _ in range(8):
+                lab = QLabel()
+                lab.setFixedSize(12, 12)
+                lab.setStyleSheet("border:1px solid #333; background:#222;")
+                r.addWidget(lab)
+                bits.append(lab)
+            hx = QLabel("0x00")
+            hx.setFixedWidth(40)
+            r.addWidget(hx)
+            r.addStretch()
+            self.inline_led_rows.append((bits, hx))
+            inline_led.addLayout(r)
+        layout.addLayout(inline_led)
+
         self.vu_widget = VUMeterWidget()
         layout.addWidget(self.vu_widget)
         # Varsayılan tempo parametrelerini uygula
@@ -722,6 +751,17 @@ class VUMeterApp(QMainWindow):
             frame = self._build_led_bytes()
             if hasattr(self, 'led_window') and self.led_window:
                 self.led_window.update_bits(frame)
+            # Inline panel update
+            try:
+                for i in range(8):
+                    val = int(frame[i]) & 0xFF
+                    bits, hx = self.inline_led_rows[i]
+                    for j in range(8):
+                        on = (val & (1 << (7 - j))) != 0
+                        bits[j].setStyleSheet("border:1px solid #333; background:" + ("#39FF14" if on else "#222") + ";")
+                    hx.setText(f"0x{val:02X}")
+            except Exception:
+                pass
             self._send_led_bytes(frame)
         except Exception:
             pass
@@ -841,10 +881,16 @@ class LedBitsWindow(QWidget):
         self.setWindowTitle("LED Bytes (8x8)")
         self.setGeometry(150, 150, 240, 220)
         layout = QVBoxLayout()
+        mapping = [
+            ("B0", "L Low"), ("B1", "L Mid"), ("B2", "L High"),
+            ("B3", "R Low"), ("B4", "R Mid"), ("B5", "R High"),
+            ("B6", "L"),     ("B7", "R")
+        ]
         self.rows = []
         for i in range(8):
             row = QHBoxLayout()
-            row.addWidget(QLabel(f"B{i}:"))
+            label_text = f"{mapping[i][0]} ({mapping[i][1]}):"
+            row.addWidget(QLabel(label_text))
             bits = []
             for _ in range(8):
                 lab = QLabel()
