@@ -13,3 +13,6 @@ numpy>=1.19.0
 # Opsiyonel: Gelişmiş görselleştirme
 matplotlib>=3.3.0
 
+# Seri haberleşme (COM port)
+pyserial>=3.5
+

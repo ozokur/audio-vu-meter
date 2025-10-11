@@ -16,7 +16,7 @@ except ImportError:
     import pyaudio
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout,
-    QHBoxLayout, QPushButton, QLabel, QComboBox, QProgressBar, QDoubleSpinBox, QCheckBox
+    QHBoxLayout, QPushButton, QLabel, QComboBox, QProgressBar, QDoubleSpinBox, QCheckBox, QGridLayout
 )
 from PyQt5.QtCore import QTimer, pyqtSignal, QObject
 
@@ -551,6 +551,17 @@ class VUMeterApp(QMainWindow):
         self.gui_timer.timeout.connect(self._on_gui_tick)
         self._last_bands = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
 
+        # LED bits window and serial sender
+        self.led_window = LedBitsWindow()
+        try:
+            self.led_window.show()
+        except Exception:
+            pass
+        self.ser = None
+        self._serial_port_name = None
+        self._serial_baud = 9600
+        self._init_serial_auto()
+
     def _init_ui(self):
         self.setWindowTitle(f"Audio VU Meter v{__version__}")
         self.setGeometry(100, 100, 620, 260)
@@ -706,6 +717,14 @@ class VUMeterApp(QMainWindow):
     def _on_gui_tick(self):
         self.vu_widget.update_levels(self._last_left, self._last_right)
         self.vu_widget.update_bands(self._last_bands)
+        # Build 8 bytes for LED output and display
+        try:
+            frame = self._build_led_bytes()
+            if hasattr(self, 'led_window') and self.led_window:
+                self.led_window.update_bits(frame)
+            self._send_led_bytes(frame)
+        except Exception:
+            pass
 
     def on_range_changed(self):
         data = self.range_combo.currentData()
@@ -731,6 +750,130 @@ class VUMeterApp(QMainWindow):
                 self._last_bands = tuple(float(x) for x in bands_tuple)
         except Exception:
             self._last_bands = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+
+    def _build_led_bytes(self):
+        """Map current levels to 8 bytes (bar graph per channel/band)."""
+        def level_to_byte(v: float) -> int:
+            v = 0.0 if not np.isfinite(v) else max(0.0, min(1.0, float(v)))
+            n = int(round(v * 8))
+            n = max(0, min(8, n))
+            # lower n bits set
+            return (1 << n) - 1 if n > 0 else 0
+
+        L = level_to_byte(self._last_left)
+        R = level_to_byte(self._last_right)
+        b = list(self._last_bands) if isinstance(self._last_bands, (list, tuple)) else [0]*6
+        while len(b) < 6:
+            b.append(0.0)
+        Llow, Lmid, Lhigh, Rlow, Rmid, Rhigh = b[:6]
+        bytes_list = [
+            level_to_byte(Llow),
+            level_to_byte(Lmid),
+            level_to_byte(Lhigh),
+            level_to_byte(Rlow),
+            level_to_byte(Rmid),
+            level_to_byte(Rhigh),
+            L,
+            R,
+        ]
+        return bytes_list
+
+    def _init_serial_auto(self):
+        """Try to auto-pick first available serial port at 9600."""
+        try:
+            if serial is None or list_ports is None:
+                return
+            ports = list(list_ports.comports())
+            if ports:
+                self._serial_port_name = ports[0].device
+                self._serial_baud = 9600
+                self._ensure_serial()
+        except Exception:
+            pass
+
+    def _ensure_serial(self):
+        try:
+            if serial is None:
+                return
+            if self.ser and self.ser.is_open:
+                return
+            if not self._serial_port_name:
+                return
+            self.ser = serial.Serial(self._serial_port_name, self._serial_baud, timeout=0)
+        except Exception:
+            try:
+                if self.ser:
+                    self.ser.close()
+            except Exception:
+                pass
+            self.ser = None
+
+    def _send_led_bytes(self, bytes_list):
+        try:
+            if not isinstance(bytes_list, (list, tuple)) or len(bytes_list) != 8:
+                return
+            self._ensure_serial()
+            if not self.ser or not self.ser.is_open:
+                return
+            payload = bytes(int(x) & 0xFF for x in bytes_list)
+            self.ser.write(payload)
+        except Exception:
+            pass
+
+    # ---- Tempo UI handlers (per-target) ----
+    def on_tempo_params_changed(self):
+        pass
+
+    def on_tempo_target_changed(self):
+        pass
+
+    def on_error(self, error_msg):
+        pass
+
+    def closeEvent(self, event):
+        event.accept()
+
+
+class LedBitsWindow(QWidget):
+    """Simple window to display 8 bytes as 8 bits."""
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("LED Bytes (8x8)")
+        self.setGeometry(150, 150, 240, 220)
+        layout = QVBoxLayout()
+        self.rows = []
+        for i in range(8):
+            row = QHBoxLayout()
+            row.addWidget(QLabel(f"B{i}:"))
+            bits = []
+            for _ in range(8):
+                lab = QLabel()
+                lab.setFixedSize(14, 14)
+                lab.setStyleSheet("border:1px solid #333; background:#222;")
+                row.addWidget(lab)
+                bits.append(lab)
+            hex_lbl = QLabel("0x00")
+            hex_lbl.setFixedWidth(40)
+            row.addWidget(hex_lbl)
+            row.addStretch()
+            layout.addLayout(row)
+            self.rows.append((bits, hex_lbl))
+        self.setLayout(layout)
+
+    def update_bits(self, byte_list):
+        if not isinstance(byte_list, (list, tuple)) or len(byte_list) != 8:
+            return
+        for i in range(8):
+            val = int(byte_list[i]) & 0xFF
+            bits, hex_lbl = self.rows[i]
+            # show MSB..LSB visually
+            for j in range(8):
+                mask = 1 << (7 - j)
+                on = (val & mask) != 0
+                bits[j].setStyleSheet(
+                    "border:1px solid #333; background:" + ("#39FF14" if on else "#222") + ";"
+                )
+            hex_lbl.setText(f"0x{val:02X}")
 
     def on_tempo_params_changed(self):
         try:
