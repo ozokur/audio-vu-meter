@@ -1,208 +1,150 @@
-# 🎵 Audio VU Meter GUI
+# Audio VU Meter GUI
 
-Ses kartından gerçek zamanlı ses seviyesi (VU - Volume Unit) verisi okuyup hızlı ve görsel bir şekilde gösteren Python uygulaması. Hem mikrofon girişini hem de **sistem ses çıkışını** (Edge browser, YouTube, müzik çalar vb.) izleyebilir!
+Ses kartından gerçek zamanlı ses seviyesi (VU - Volume Unit) verisini okuyup hızlı ve görsel şekilde gösteren bir Python uygulaması. Hem mikrofon girişini hem de sistem ses çıkışını (Edge, YouTube, müzik çalar vb.) izleyebilirsiniz.
 
-## 🎯 Özellikler
+## Özellikler
+- Gerçek zamanlı ses girişi (PyAudio)
+- Sistem ses çıkışı (WASAPI loopback) dinleme
+- Düşük gecikmeli, modern PyQt5 arayüz
+- Görsel göstergeler: VU çubuğu, peak, dB, stereo (Sol/Sağ)
+- Ayarlanabilir cihaz/loopback seçimi
 
-- 🎤 **Gerçek Zamanlı Ses Girişi**: PyAudio ile ses kartından canlı veri okuma
-- 🔊 **Sistem Ses Çıkışı Dinleme**: Windows WASAPI loopback ile browser, YouTube, Spotify gibi uygulamaların sesini izleyin
-- 🌐 **Edge Browser Desteği**: Tarayıcınızda çalan müzik/video seslerini gerçek zamanlı görselleştirin
-- 📊 **Hızlı VU Meter Gösterimi**: Düşük latency ile anlık ses seviyesi
-- 🎨 **Modern GUI**: PyQt5 ile kullanıcı dostu arayüz
-- 📈 **Görsel Göstergeler**: 
-  - VU meter çubuğu
-  - Peak level göstergesi
-  - dB seviyesi
-  - Stereo (Sol/Sağ) kanal ayrı gösterimi
-- ⚡ **Yüksek Performans**: Threading ile optimize edilmiş
-- 🎛️ **Ayarlanabilir**: Ses kartı seçimi, loopback/mikrofon seçimi
+## Gereksinimler
+- Python 3.7+
+- Windows/macOS/Linux
+- Mikrofon veya line-in girişi (loopback için Windows önerilir)
 
-## 📋 Gereksinimler
+## Kurulum
+1) Gerekli paketleri yükleyin:
 
-- **Python**: 3.7 veya üstü
-- **İşletim Sistemi**: Windows, macOS, Linux
-- **Ses Kartı**: Mikrofon veya line-in girişi
-
-## 🚀 Kurulum
-
-### 1. Repository'yi klonlayın:
-```bash
-git clone https://github.com/ozokur/audio-vu-meter.git
-cd audio-vu-meter
 ```
-
-### 2. Gerekli paketleri yükleyin:
-```bash
 pip install -r requirements.txt
 ```
 
-### 3. Programı çalıştırın:
-```bash
-python vu_meter.py
-```
-
-## 📦 Bağımlılıklar
-
-- `pyaudio` - Ses kartı I/O
-- `PyQt5` - GUI framework
-- `numpy` - Ses verisi işleme
-- `matplotlib` (opsiyonel) - Gelişmiş görselleştirme
-
-## 🎛️ Kullanım
-
-### Temel Kullanım
-```bash
-python vu_meter.py
-```
-
-Uygulama açıldığında:
-1. **Ses Kartı** açılır menüsünden kaynağı seçin:
-   - 🔊 **Sistem Ses Çıkışı (Loopback)**: Edge browser, YouTube, Spotify vb. tüm sistem seslerini dinler
-   - 🎤 **Mikrofon**: Fiziksel mikrofon girişini dinler
-2. **▶ Başlat** butonuna basın
-3. Edge'de YouTube/müzik açın veya mikrofona konuşun
-4. VU meter gerçek zamanlı ses seviyesini gösterecektir!
-
-### İpuçları
-- 🌐 **Browser Sesi İçin**: "🔊 Sistem Ses Çıkışı (Loopback)" seçeneğini seçin
-- 🎤 **Mikrofon İçin**: Listeden mikrofonunuzu seçin
-- 📊 **dB Değerleri**: -60 dB sessizlik, 0 dB maksimum
-- ⚡ **Peak Göstergesi**: En yüksek seviyeyi gösterir
-
-## 🖼️ Ekran Görüntüleri
+Windows’ta PyAudio kurulumu hata verirse:
 
 ```
-┌─────────────────────────────────────┐
-│  🎵 Audio VU Meter                  │
-├─────────────────────────────────────┤
-│                                     │
-│  Sol  ████████████░░░░░ -12 dB     │
-│  Sağ  █████████████████ -6 dB      │
-│                                     │
-│  Peak: -3 dB                        │
-│                                     │
-│  [Start] [Stop] [Settings]          │
-└─────────────────────────────────────┘
-```
-
-## 🔧 Özelleştirme
-
-### Renk Temaları
-Ayarlar menüsünden veya `config.json` dosyasından:
-- Dark theme (varsayılan)
-- Light theme
-- Custom colors
-
-### VU Meter Davranışı
-```python
-# config.json
-{
-  "sample_rate": 44100,
-  "chunk_size": 1024,
-  "channels": 2,
-  "update_interval": 50,  # ms
-  "peak_hold_time": 1000  # ms
-}
-```
-
-## 📊 Teknik Detayler
-
-### Ses İşleme
-- Örnekleme hızı: 44.1 kHz (ayarlanabilir)
-- Chunk boyutu: 1024 samples
-- RMS (Root Mean Square) hesaplama
-- Peak detection
-- dB dönüşümü
-
-### Performans
-- Threading ile ayrı ses okuma thread'i
-- Queue sistemi ile thread-safe veri aktarımı
-- 60 FPS GUI güncelleme
-- <50ms latency
-
-## 🛠️ Geliştirme
-
-### Proje Yapısı
-```
-audio-vu-meter/
-├── vu_meter.py          # Ana uygulama
-├── audio_input.py       # Ses kartı okuma modülü
-├── vu_widget.py         # VU meter GUI widget
-├── config.py            # Yapılandırma yönetimi
-├── requirements.txt     # Python bağımlılıklar
-├── README.md           # Dokümantasyon
-├── LICENSE             # MIT License
-└── examples/           # Örnek kodlar
-    ├── simple_meter.py
-    └── spectrum_analyzer.py
-```
-
-### Katkıda Bulunma
-1. Fork edin
-2. Feature branch oluşturun (`git checkout -b feature/amazing-feature`)
-3. Commit edin (`git commit -m 'feat: Add amazing feature'`)
-4. Push edin (`git push origin feature/amazing-feature`)
-5. Pull Request açın
-
-## ⚠️ Sorun Giderme
-
-### Sistem Sesi Dinlenmiyor (Loopback)
-Windows'ta loopback özelliği WASAPI ile çalışır. Eğer ses gelmiyor ise:
-- Windows ses ayarlarında "Stereo Mix" veya "What U Hear" özelliğinin etkin olduğundan emin olun
-- Ses çıkış cihazının aktif ve ses çalıyor olması gerekir
-- Edge'de veya başka bir uygulamada ses çalın ve tekrar deneyin
-
-### PyAudio Kurulum Hatası (Windows)
-```bash
-# Wheel dosyasını manuel indirin ve kurun
 pip install pipwin
 pipwin install pyaudio
 ```
 
-### Ses Kartı Bulunamıyor
-Uygulamayı başlattığınızda "Ses Kartı" açılır menüsünden cihazları görebilirsiniz.
-- 🔊 işaretli olan sistem ses çıkışıdır (loopback)
-- 🎤 işaretli olanlar mikrofon girişleridir
+2) Uygulamayı çalıştırın:
 
-### Yüksek Latency
-- Chunk size'ı azaltın (512 veya 256)
-- Buffer sayısını azaltın
-- Daha güçlü CPU kullanın
+```
+python vu_meter.py
+```
 
-## 📝 TODO / Planlanan Özellikler
+## Kullanım
+1. “Ses Kartı” menüsünden kaynağı seçin:
+   - Sistem Ses Çıkışı (Loopback): Edge, YouTube, Spotify vb. tüm sistem sesleri
+   - Mikrofon: Fiziksel mikrofon girişi
+2. “Başlat”a basın
+3. Müzik çalın veya mikrofona konuşun; VU meter anlık seviyeyi gösterir
 
-- [ ] Spektrum analyzer modu
-- [ ] Ses kaydı özelliği
-- [ ] FFT analizi
-- [ ] Multi-channel desteği (>2 kanal)
-- [ ] VST plugin desteği
-- [ ] ASIO driver desteği (Windows)
-- [ ] Skin sistemi
-- [ ] Preset yönetimi
+## İpuçları
+- Tarayıcı sesi için “Sistem Ses Çıkışı (Loopback)” seçeneğini kullanın
+- dB referansı: ~-60 dB sessiz, 0 dB maksimuma yakın
+- Peak göstergesi en yüksek seviyeyi gösterir
 
-## 📄 Lisans
+## Teknik Notlar
+- Örnekleme hızı: 44.1 kHz (ayarlanabilir)
+- Chunk boyutu: 1024 samples
+- RMS ve peak hesaplama, dB dönüşümü
+- Ayrı ses okuma thread’i, ~60 FPS GUI güncelleme
 
-MIT License - Detaylar için [LICENSE](LICENSE) dosyasına bakın.
+## Sorun Giderme
+### Sistem sesi gelmiyor (Loopback)
+- Windows’ta WASAPI loopback gerekir; ses çıkışı aktifken deneyin
+- “Stereo Mix/What U Hear” türü seçenekler açık olmalı (bazı cihazlarda)
 
-## 👨‍💻 Geliştirici
+### PyAudio kurulumu (Windows)
+Yukarıdaki `pipwin` adımlarını uygulayın.
 
-Developed with ❤️ for audio enthusiasts
+### Cihaz görünmüyor
+- Menüyü “Yenile” ile güncelleyin
+- [Sistem] etiketli olanlar loopback, [Mikrofon] etiketli olanlar giriş cihazlarıdır
 
-## 🔗 Bağlantılar
+## Lisans
+MIT License — detaylar için `LICENSE` dosyasına bakın.
+# Audio VU Meter GUI
 
-- [PyAudio Dokümantasyonu](https://people.csail.mit.edu/hubert/pyaudio/)
-- [PyQt5 Dokümantasyonu](https://www.riverbankcomputing.com/static/Docs/PyQt5/)
-- [Ses İşleme Rehberi](https://realpython.com/python-scipy-fft/)
+Gerçek zamanlı ses seviyesi (VU) ölçümü ve görselleştirmesi yapan bir Python uygulaması. Hem mikrofon girişini hem de Windows’ta WASAPI loopback ile sistem ses çıkışını (Edge, YouTube, müzik çalar vb.) izleyebilirsiniz.
 
-## ⭐ Destek
+## Öne Çıkanlar
+- Gerçek zamanlı ölçüm (PyAudio/pyaudiowpatch)
+- Sistem ses çıkışı (WASAPI loopback) dinleme
+- Modern PyQt5 arayüz, düşük gecikme
+- dB aralığı seçimi (örn. −90/−60/−48/−40/−30 dB)
+- Ayarlanabilir FPS (30/60/120/240)
+- 6 bant (L/R Low–Mid–High) barları ve per‑bant dB
+- Tempo ışıkları: her kanal/bantta seviye darbelerine göre yanıp sönme
+- BPM tahmini (L/R)
+- Döner dosya log’u: `audio_vu_meter.log`
 
-Projeyi beğendiyseniz yıldız vermeyi unutmayın! ⭐
+## Hızlı Başlangıç
+1) Bağımlılıkları yükleyin
 
-## 📧 İletişim
+```
+pip install -r requirements.txt
+```
 
-Sorularınız için issue açabilir veya pull request gönderebilirsiniz.
+Windows’ta PyAudio kurulumu hata verirse:
 
----
+```
+pip install pipwin
+pipwin install pyaudio
+```
 
-**Not**: Bu proje eğitim ve hobi amaçlıdır. Profesyonel ses uygulamaları için daha spesifik çözümler gerekebilir.
+2) Çalıştırın (Gelişmiş, 120 FPS + 6 bant + tempo/BPM):
+
+```
+python vu_meter_120fps.py
+```
+
+Alternatif (Temel sürüm):
+
+```
+python vu_meter.py
+```
+
+## Kullanım
+- “Ses Kartı” menüsünden kaynak seçin:
+  - [Sistem] … (Loopback): Tüm sistem seslerini dinler
+  - [Mikrofon] …: Fiziksel mikrofon girişini dinler
+- Aralık: VU çubuğunun dB alt sınırını seçer (0 dB tepe referansı)
+- FPS: Arayüz güncelleme hızını ayarlar (CPU/GPU yüküyle dengeli seçin)
+- Tempo parametreleri (vu_meter_120fps.py):
+  - Eşik (delta): Darbe tespiti hassasiyeti (0–1)
+  - Hold ms: Işığın açık kalma süresi
+  - Min ms: Darbeler arası minimum süre
+  - Alfa: Zarf (envelope) yumuşatma katsayısı
+
+6 bant görünümü (vu_meter_120fps.py):
+- L/R için Low (20–250 Hz), Mid (250–4000 Hz), High (4–20 kHz)
+- Her bant için dB değeri ve tempo ışığı
+- L/R genel satırlarında BPM tahmini etiketi
+
+## Teknik Notlar
+- Örnekleme hızı: 44.1 kHz (cihaz varsayılanına uyarlanır)
+- Chunk boyutu: 256 (120 FPS akıcılık için)
+- RMS ve peak hesaplama; VU çubuğu dB → yüzde haritalaması (min_dB..0 dB)
+- FFT (RFFT + Hann) ile bant güçlerinden RMS tahmini
+
+## Sorun Giderme
+Sistem sesi gelmiyor (Loopback):
+- Windows’ta WASAPI loopback gerekir; ses çıkışı aktifken deneyin
+- Bazı cihazlarda “Stereo Mix/What U Hear” benzeri seçenekleri etkinleştirin
+
+PyAudio kurulumu (Windows):
+- `pipwin install pyaudio` kullanın (öncesinde `pip install pipwin`)
+
+Cihaz görünmüyor:
+- “Yenile” ile listeyi güncelleyin
+- [Sistem] etiketi loopback, [Mikrofon] etiketi giriş cihazıdır
+
+Loglar:
+- Hatalar ve önemli bilgiler `audio_vu_meter.log` dosyasına yazılır
+
+## Lisans
+MIT License — ayrıntılar için `LICENSE` dosyasına bakın.
 
