@@ -560,6 +560,8 @@ class VUMeterApp(QMainWindow):
         self.gui_timer.setInterval(8)  # ~120 Hz
         self.gui_timer.timeout.connect(self._on_gui_tick)
         self._last_bands = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+        # Peak blink state per target (LH, LM, LL, L, R, RL, RM, RH)
+        self._peak_blink = {}
 
         # LED bits window and serial sender
         self.led_window = LedBitsWindow()
@@ -860,6 +862,31 @@ class VUMeterApp(QMainWindow):
                 if s and now < float(s.get('on_until', 0.0)):
                     # Ensure the lowest bit is set to indicate beat, do not touch MSB
                     bytes_list[i] = int(bytes_list[i]) | 0x01
+        except Exception:
+            pass
+        # Overlay peak-return blink: set MSB (0x80) briefly when peak falls
+        try:
+            # Prepare linear levels in the same order as keys
+            linear_levels = [Lhigh, Lmid, Llow, self._last_left, self._last_right, Rlow, Rmid, Rhigh]
+            now = time.monotonic()
+            peak_delta = 0.05  # trigger when drop exceeds 5% linear
+            hold_s = 0.12
+            for i, k in enumerate(['Lhigh','Lmid','Llow','L','R','Rlow','Rmid','Rhigh']):
+                cur = float(linear_levels[i]) if np.isfinite(linear_levels[i]) else 0.0
+                st = self._peak_blink.get(k)
+                if st is None:
+                    st = {'max': 0.0, 'on_until': 0.0}
+                # rising peak
+                if cur > st['max']:
+                    st['max'] = cur
+                # falling enough -> blink
+                elif st['max'] - cur >= peak_delta:
+                    st['on_until'] = now + hold_s
+                    st['max'] = cur
+                # apply overlay if active
+                if now < st.get('on_until', 0.0):
+                    bytes_list[i] = int(bytes_list[i]) | 0x80
+                self._peak_blink[k] = st
         except Exception:
             pass
         return bytes_list
