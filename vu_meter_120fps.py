@@ -340,13 +340,14 @@ class VUMeterWidget(QWidget):
 
         layout.addLayout(bands_layout)
         
-        # Peak hold control
+        # Peak hold control (seconds, 0.1 .. 10.0)
         ctl_row = QHBoxLayout()
-        ctl_row.addWidget(QLabel("Peak Hold ms:"))
-        self.peak_hold_spin = QSpinBox()
-        self.peak_hold_spin.setRange(0, 10000)
-        self.peak_hold_spin.setSingleStep(50)
-        self.peak_hold_spin.setValue(1000)
+        ctl_row.addWidget(QLabel("Peak Hold s:"))
+        self.peak_hold_spin = QDoubleSpinBox()
+        self.peak_hold_spin.setDecimals(1)
+        self.peak_hold_spin.setRange(0.0, 10.0)
+        self.peak_hold_spin.setSingleStep(0.1)
+        self.peak_hold_spin.setValue(1.0)
         self.peak_hold_spin.valueChanged.connect(self.on_peak_hold_changed)
         ctl_row.addWidget(self.peak_hold_spin)
         ctl_row.addStretch()
@@ -355,7 +356,9 @@ class VUMeterWidget(QWidget):
 
     def on_peak_hold_changed(self):
         try:
-            self.set_peak_hold_ms(int(self.peak_hold_spin.value()))
+            # peak_hold_spin is in seconds with 0.1 resolution
+            seconds = float(self.peak_hold_spin.value())
+            self.set_peak_hold_ms(int(max(0.0, seconds) * 1000.0))
         except Exception:
             pass
 
