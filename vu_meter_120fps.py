@@ -16,7 +16,7 @@ except ImportError:
     import pyaudio
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout,
-    QHBoxLayout, QPushButton, QLabel, QComboBox, QProgressBar, QDoubleSpinBox
+    QHBoxLayout, QPushButton, QLabel, QComboBox, QProgressBar, QDoubleSpinBox, QCheckBox
 )
 from PyQt5.QtCore import QTimer, pyqtSignal, QObject
 
