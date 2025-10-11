@@ -700,13 +700,15 @@ class VUMeterApp(QMainWindow):
         device_layout.addWidget(self.range_combo)
 
         fps_label = QLabel("FPS:")
-        self.fps_spin = QSpinBox()
-        self.fps_spin.setRange(1, 1000)
-        self.fps_spin.setSingleStep(1)
-        self.fps_spin.setValue(120)
-        self.fps_spin.valueChanged.connect(self.on_fps_changed)
+        # Allow fractional FPS down to 0.1
+        self.fps_dspin = QDoubleSpinBox()
+        self.fps_dspin.setDecimals(1)
+        self.fps_dspin.setRange(0.1, 1000.0)
+        self.fps_dspin.setSingleStep(0.1)
+        self.fps_dspin.setValue(120.0)
+        self.fps_dspin.valueChanged.connect(self.on_fps_changed)
         device_layout.addWidget(fps_label)
-        device_layout.addWidget(self.fps_spin)
+        device_layout.addWidget(self.fps_dspin)
         
         # Tempo hedefi ve otomatik eÅŸik
         target_label = QLabel("Tempo Hedefi:")
@@ -894,21 +896,23 @@ class VUMeterApp(QMainWindow):
             self.vu_widget.set_min_db(float(data))
 
     def on_fps_changed(self):
-        # Prefer spinbox if present; fallback to combo
-        fps = 120
+        # Prefer double spin (0.1..1000), fallback to int spin or combo
+        fps = 120.0
         try:
-            if hasattr(self, 'fps_spin') and self.fps_spin is not None:
-                fps = int(self.fps_spin.value())
+            if hasattr(self, 'fps_dspin') and self.fps_dspin is not None:
+                fps = float(self.fps_dspin.value())
+            elif hasattr(self, 'fps_spin') and self.fps_spin is not None:
+                fps = float(int(self.fps_spin.value()))
             elif hasattr(self, 'fps_combo') and self.fps_combo is not None:
                 data = self.fps_combo.currentData()
-                fps = int(data) if data is not None else 120
+                fps = float(int(data) if data is not None else 120)
         except Exception:
-            fps = 120
-        if fps < 1:
-            fps = 1
-        if fps > 1000:
-            fps = 1000
-        interval_ms = max(1, int(round(1000.0 / float(fps))))
+            fps = 120.0
+        if fps < 0.1:
+            fps = 0.1
+        if fps > 1000.0:
+            fps = 1000.0
+        interval_ms = max(1, int(round(1000.0 / fps)))
         self.gui_timer.setInterval(interval_ms)
 
     def on_bands_updated(self, bands_tuple):
