@@ -1,7 +1,7 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Audio VU Meter GUI (120 FPS + Ayarlanabilir dB Aralığı)
+Audio VU Meter GUI (120 FPS + Ayarlanabilir dB AralÄ±ÄŸÄ±)
 """
 
 import sys
@@ -16,7 +16,7 @@ except ImportError:
     import pyaudio
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout,
-    QHBoxLayout, QPushButton, QLabel, QComboBox, QProgressBar, QDoubleSpinBox, QCheckBox, QGridLayout
+    QHBoxLayout, QPushButton, QLabel, QComboBox, QProgressBar, QDoubleSpinBox, QCheckBox, QGridLayout, QSpinBox
 )
 from PyQt5.QtCore import QTimer, pyqtSignal, QObject
 
@@ -46,7 +46,7 @@ class AudioMonitor(QObject):
     def __init__(self):
         super().__init__()
         self.sample_rate = 44100
-        self.chunk_size = 256  # 120 Hz GUI için daha sık callback
+        self.chunk_size = 256  # 120 Hz GUI iÃ§in daha sÄ±k callback
         self.channels = 2
         self.device_index = None
         self.use_loopback = False
@@ -71,8 +71,8 @@ class AudioMonitor(QObject):
             self.stream = self.pa.open(**params)
             self.stream.start_stream()
         except Exception as e:
-            logger.exception("Ses kartı başlatma hatası")
-            self.error_occurred.emit(f"Ses kartı hatası: {e}")
+            logger.exception("Ses kartÄ± baÅŸlatma hatasÄ±")
+            self.error_occurred.emit(f"Ses kartÄ± hatasÄ±: {e}")
 
     def _audio_callback(self, in_data, frame_count, time_info, status):
         try:
@@ -105,10 +105,10 @@ class AudioMonitor(QObject):
             r_rms = _s(r_rms)
             self.level_updated.emit(l_rms, r_rms)
 
-            # 3 bant (Low/Mid/High) için spektral güçten RMS tahmini
+            # 3 bant (Low/Mid/High) iÃ§in spektral gÃ¼Ã§ten RMS tahmini
             try:
                 if 'data' in locals() and data is not None and data.size > 0:
-                    # Kanal ayrımı
+                    # Kanal ayrÄ±mÄ±
                     if self.channels == 2 and data.size >= 2:
                         lch = data[0::2]
                         rch = data[1::2]
@@ -141,10 +141,10 @@ class AudioMonitor(QObject):
                     r_bands = band_rms(rch, sr, bands)
                     self.bands_updated.emit(tuple(l_bands + r_bands))
             except Exception:
-                # Spektral hesap hatası UI'ı durdurmasın
+                # Spektral hesap hatasÄ± UI'Ä± durdurmasÄ±n
                 pass
         except Exception:
-            logger.exception("Audio callback hatası")
+            logger.exception("Audio callback hatasÄ±")
         return (in_data, pyaudio.paContinue)
 
     def stop(self):
@@ -184,7 +184,7 @@ class AudioMonitor(QObject):
                         'is_loopback': True
                     })
             except Exception as e:
-                logger.warning(f"WASAPI loopback bulunamadı: {e}")
+                logger.warning(f"WASAPI loopback bulunamadÄ±: {e}")
         for i in range(pa.get_device_count()):
             try:
                 info = pa.get_device_info_by_index(i)
@@ -221,19 +221,19 @@ class VUMeterWidget(QWidget):
             'Rmid': {'env': 0.0, 'on_until': 0.0, 'last': 0.0, 'last_flash': 0.0, 'beats': []},
             'Rhigh': {'env': 0.0, 'on_until': 0.0, 'last': 0.0, 'last_flash': 0.0, 'beats': []},
         }
-        # Per-key tarihçe ve varsayılan parametreler
+        # Per-key tarihÃ§e ve varsayÄ±lan parametreler
         for k in list(self._tempo.keys()):
             self._tempo[k]['hist'] = []
             self._tempo[k]['hist_maxlen'] = 120
         self._tempo_params = {kk: {'alpha': 0.20, 'delta': 0.08, 'min_interval': 0.25, 'hold': 0.12, 'auto': False, 'k': 0.6}
                               for kk in self._tempo.keys()}
-        # Tüm kanallar/bantlar için (L, R, Llow/Lmid/Lhigh, Rlow/Rmid/Rhigh)
-        # otomatik eşik ve hızlı tepki parametrelerini varsayılan yap
+        # TÃ¼m kanallar/bantlar iÃ§in (L, R, Llow/Lmid/Lhigh, Rlow/Rmid/Rhigh)
+        # otomatik eÅŸik ve hÄ±zlÄ± tepki parametrelerini varsayÄ±lan yap
         for key in list(self._tempo_params.keys()):
             self._tempo_params[key].update({
                 'auto': True,   # otomatik delta kullan
-                'alpha': 0.15,  # biraz daha hızlı envelope
-                'k': 0.8,       # std çarpanı (daha hassas)
+                'alpha': 0.15,  # biraz daha hÄ±zlÄ± envelope
+                'k': 0.8,       # std Ã§arpanÄ± (daha hassas)
                 'min_interval': 0.20,
                 'hold': 0.10,
             })
@@ -268,7 +268,7 @@ class VUMeterWidget(QWidget):
 
         right_layout = QHBoxLayout()
         self.r_light = self._make_light()
-        right_label = QLabel("Sağ:")
+        right_label = QLabel("SaÄŸ:")
         right_label.setFixedWidth(40)
         self.right_bar = QProgressBar()
         self.right_bar.setMaximum(100)
@@ -382,7 +382,7 @@ class VUMeterWidget(QWidget):
         self.left_db_label.setText(f"{left_db:.1f} dB")
         self.right_db_label.setText(f"{right_db:.1f} dB")
         self.peak_label.setText(f"{peak_db:.1f} dB")
-        # Tempo ışıkları (Sol/Sağ)
+        # Tempo Ä±ÅŸÄ±klarÄ± (Sol/SaÄŸ)
         self._update_tempo('L', self.left_level)
         self._update_tempo('R', self.right_level)
         self._apply_light('L', self.l_light)
@@ -422,7 +422,7 @@ class VUMeterWidget(QWidget):
         self.r_low_bar.setValue(perc[3]); self.r_low_db.setText(f"{dbs[3]:.1f} dB")
         self.r_mid_bar.setValue(perc[4]); self.r_mid_db.setText(f"{dbs[4]:.1f} dB")
         self.r_high_bar.setValue(perc[5]); self.r_high_db.setText(f"{dbs[5]:.1f} dB")
-        # Tempo ışıkları (bantlar)
+        # Tempo Ä±ÅŸÄ±klarÄ± (bantlar)
         keys = ['Llow','Lmid','Lhigh','Rlow','Rmid','Rhigh']
         lights = [self.l_low_light, self.l_mid_light, self.l_high_light,
                   self.r_low_light, self.r_mid_light, self.r_high_light]
@@ -515,7 +515,7 @@ class VUMeterWidget(QWidget):
         if float(value) > s['env'] + delta and (now - s['last_flash'] > min_interval):
             s['on_until'] = now + hold
             s['last_flash'] = now
-            # BPM tahmini için zaman damgası kaydı (son 10 sn)
+            # BPM tahmini iÃ§in zaman damgasÄ± kaydÄ± (son 10 sn)
             beats = s.setdefault('beats', [])
             beats.append(now)
             cutoff = now - 10.0
@@ -529,7 +529,7 @@ class VUMeterWidget(QWidget):
         if s is None:
             return
         on = now < s.get('on_until', 0.0)
-        # Renk seçimi: genel L/R yeşil; low=mavi, mid=sarı, high=kırmızı
+        # Renk seÃ§imi: genel L/R yeÅŸil; low=mavi, mid=sarÄ±, high=kÄ±rmÄ±zÄ±
         if key in ('L', 'R'):
             color = "#39FF14"
         elif 'low' in key.lower():
@@ -581,18 +581,18 @@ class VUMeterApp(QMainWindow):
         self.setCentralWidget(central)
         layout = QVBoxLayout()
 
-        title = QLabel("Gerçek Zamanlı VU Meter - Mikrofon & Sistem Sesi")
+        title = QLabel("GerÃ§ek ZamanlÄ± VU Meter - Mikrofon & Sistem Sesi")
         title.setStyleSheet("font-size: 16px; font-weight: bold; padding: 10px;")
         layout.addWidget(title)
 
         device_layout = QHBoxLayout()
-        device_label = QLabel("Ses Kartı:")
+        device_label = QLabel("Ses KartÄ±:")
         self.device_combo = QComboBox()
         self.refresh_devices()
         device_layout.addWidget(device_label)
         device_layout.addWidget(self.device_combo)
 
-        range_label = QLabel("Aralık:")
+        range_label = QLabel("AralÄ±k:")
         self.range_combo = QComboBox()
         for val in (-90, -60, -48, -40, -30):
             self.range_combo.addItem(f"{val} dB", float(val))
@@ -602,15 +602,15 @@ class VUMeterApp(QMainWindow):
         device_layout.addWidget(self.range_combo)
 
         fps_label = QLabel("FPS:")
-        self.fps_combo = QComboBox()
-        for fps in (30, 60, 120, 240):
-            self.fps_combo.addItem(f"{fps}", int(fps))
-        self.fps_combo.setCurrentIndex(2)  # 120 FPS varsayılan
-        self.fps_combo.currentIndexChanged.connect(self.on_fps_changed)
+        self.fps_spin = QSpinBox()
+        self.fps_spin.setRange(1, 1000)
+        self.fps_spin.setSingleStep(1)
+        self.fps_spin.setValue(120)
+        self.fps_spin.valueChanged.connect(self.on_fps_changed)
         device_layout.addWidget(fps_label)
-        device_layout.addWidget(self.fps_combo)
-
-        # Tempo hedefi ve otomatik eşik
+        device_layout.addWidget(self.fps_spin)
+        
+        # Tempo hedefi ve otomatik eÅŸik
         target_label = QLabel("Tempo Hedefi:")
         self.tempo_target = QComboBox()
         for key in ("L","R","Llow","Lmid","Lhigh","Rlow","Rmid","Rhigh"):
@@ -622,8 +622,8 @@ class VUMeterApp(QMainWindow):
         device_layout.addWidget(self.tempo_target)
         device_layout.addWidget(self.tempo_auto)
 
-        # Tempo parametreleri (Eşik, Hold, Min, Alfa)
-        thr_label = QLabel("Eşik:")
+        # Tempo parametreleri (EÅŸik, Hold, Min, Alfa)
+        thr_label = QLabel("EÅŸik:")
         self.tempo_thr = QDoubleSpinBox()
         self.tempo_thr.setRange(0.0, 1.0)
         self.tempo_thr.setSingleStep(0.01)
@@ -651,7 +651,7 @@ class VUMeterApp(QMainWindow):
                   min_label, self.tempo_min, alpha_label, self.tempo_alpha):
             device_layout.addWidget(w)
 
-        # Değer değişince uygula
+        # DeÄŸer deÄŸiÅŸince uygula
         self.tempo_thr.valueChanged.connect(self.on_tempo_params_changed)
         self.tempo_hold.valueChanged.connect(self.on_tempo_params_changed)
         self.tempo_min.valueChanged.connect(self.on_tempo_params_changed)
@@ -701,14 +701,14 @@ class VUMeterApp(QMainWindow):
 
         self.vu_widget = VUMeterWidget()
         layout.addWidget(self.vu_widget)
-        # Varsayılan tempo parametrelerini uygula
+        # VarsayÄ±lan tempo parametrelerini uygula
         try:
             self.on_tempo_params_changed()
         except Exception:
             pass
 
         buttons = QHBoxLayout()
-        self.start_button = QPushButton("Başlat")
+        self.start_button = QPushButton("BaÅŸlat")
         self.start_button.clicked.connect(self.start_monitoring)
         self.stop_button = QPushButton("Durdur")
         self.stop_button.clicked.connect(self.stop_monitoring)
@@ -720,7 +720,7 @@ class VUMeterApp(QMainWindow):
             buttons.addWidget(b)
         layout.addLayout(buttons)
 
-        self.status_label = QLabel("Hazır")
+        self.status_label = QLabel("HazÄ±r")
         self.status_label.setStyleSheet("padding: 5px; background-color: #f0f0f0;")
         layout.addWidget(self.status_label)
 
@@ -796,9 +796,14 @@ class VUMeterApp(QMainWindow):
             self.vu_widget.set_min_db(float(data))
 
     def on_fps_changed(self):
-        data = self.fps_combo.currentData()
+        # Prefer spinbox if present; fallback to combo
+        fps = 120
         try:
-            fps = int(data) if data is not None else 120
+            if hasattr(self, 'fps_spin') and self.fps_spin is not None:
+                fps = int(self.fps_spin.value())
+            elif hasattr(self, 'fps_combo') and self.fps_combo is not None:
+                data = self.fps_combo.currentData()
+                fps = int(data) if data is not None else 120
         except Exception:
             fps = 120
         if fps < 1:
@@ -1058,3 +1063,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
