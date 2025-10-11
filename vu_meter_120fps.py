@@ -659,33 +659,43 @@ class VUMeterApp(QMainWindow):
         layout.addLayout(device_layout)
 
         # Inline LED bit panel (8 bytes) with labels
-        inline_led = QVBoxLayout()
-        inline_header = QLabel("LED Bytes (Inline)")
+        inline_box = QVBoxLayout()
+        inline_header = QLabel("LED Columns (Inline, bottom-up)")
         inline_header.setStyleSheet("font-weight:bold; padding:4px;")
-        inline_led.addWidget(inline_header)
-        self.inline_led_rows = []
-        self._inline_mapping = [
-            ("B0", "L Low"), ("B1", "L Mid"), ("B2", "L High"),
-            ("B3", "R Low"), ("B4", "R Mid"), ("B5", "R High"),
-            ("B6", "L"),     ("B7", "R")
+        inline_box.addWidget(inline_header)
+        inline_cols_row = QHBoxLayout()
+        # Column order left-to-right: LH LM LL L R RL RM RH
+        self._inline_col_labels = [
+            ("LH", "L High", 'Lhigh'), ("LM", "L Mid", 'Lmid'), ("LL", "L Low", 'Llow'),
+            ("L", "L", 'L'), ("R", "R", 'R'), ("RL", "R Low", 'Rlow'),
+            ("RM", "R Mid", 'Rmid'), ("RH", "R High", 'Rhigh')
         ]
-        for i in range(8):
-            r = QHBoxLayout()
-            r.addWidget(QLabel(f"{self._inline_mapping[i][0]} ({self._inline_mapping[i][1]}):"))
+        self.inline_led_cols = []  # list of (bit_labels_bottom_up[8], hex_label)
+        for code, label, _key in self._inline_col_labels:
+            col = QVBoxLayout()
+            col.setSpacing(2)
+            title = QLabel(f"{code}")
+            title.setStyleSheet("font-size:12px; font-weight:bold;")
+            col.addWidget(title)
             bits = []
+            # Build bottom-up: add spacer, then bits from top to bottom for layout,
+            # but store list in bottom-up order for easy addressing
             for _ in range(8):
                 lab = QLabel()
                 lab.setFixedSize(12, 12)
                 lab.setStyleSheet("border:1px solid #333; background:#222;")
-                r.addWidget(lab)
+                col.addWidget(lab)
                 bits.append(lab)
+            # bits currently top-down; reverse to get bottom-up indexing
+            bits_bottom_up = list(reversed(bits))
             hx = QLabel("0x00")
-            hx.setFixedWidth(40)
-            r.addWidget(hx)
-            r.addStretch()
-            self.inline_led_rows.append((bits, hx))
-            inline_led.addLayout(r)
-        layout.addLayout(inline_led)
+            hx.setFixedWidth(44)
+            hx.setStyleSheet("padding:2px;")
+            col.addWidget(hx)
+            inline_cols_row.addLayout(col)
+            self.inline_led_cols.append((bits_bottom_up, hx))
+        inline_box.addLayout(inline_cols_row)
+        layout.addLayout(inline_box)
 
         self.vu_widget = VUMeterWidget()
         layout.addWidget(self.vu_widget)
@@ -761,14 +771,16 @@ class VUMeterApp(QMainWindow):
             frame = self._build_led_bytes()
             if hasattr(self, 'led_window') and self.led_window:
                 self.led_window.update_bits(frame)
-            # Inline panel update
+            # Inline vertical columns update (bottom-up)
             try:
                 for i in range(8):
                     val = int(frame[i]) & 0xFF
-                    bits, hx = self.inline_led_rows[i]
+                    bits_bottom_up, hx = self.inline_led_cols[i]
                     for j in range(8):
-                        on = (val & (1 << (7 - j))) != 0
-                        bits[j].setStyleSheet("border:1px solid #333; background:" + ("#39FF14" if on else "#222") + ";")
+                        on = (val & (1 << j)) != 0  # j=0 bottom LED (LSB)
+                        bits_bottom_up[j].setStyleSheet(
+                            "border:1px solid #333; background:" + ("#39FF14" if on else "#222") + ";"
+                        )
                     hx.setText(f"0x{val:02X}")
             except Exception:
                 pass
@@ -802,33 +814,45 @@ class VUMeterApp(QMainWindow):
             self._last_bands = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
 
     def _build_led_bytes(self):
-        """Map current levels to 8 bytes (bar graph per channel/band)."""
-        def level_to_byte(v: float) -> int:
+        """Map current levels to 8 bytes (vertical bars) using dB range."""
+        def level_to_byte_db(v: float, min_db: float) -> int:
+            # Convert linear level to dB and map to 0..8 LEDs based on min_db..0dB
             v = 0.0 if not np.isfinite(v) else max(0.0, min(1.0, float(v)))
-            n = int(round(v * 8))
+            db = -float('inf')
+            if v > 1e-12:
+                db = 20.0 * np.log10(v)
+            if not np.isfinite(db) or db <= min_db:
+                n = 0
+            elif db >= 0.0:
+                n = 8
+            else:
+                pct = (db - min_db) / (0.0 - min_db)
+                n = int(round(pct * 8))
             n = max(0, min(8, n))
-            # lower n bits set
             return (1 << n) - 1 if n > 0 else 0
 
-        L = level_to_byte(self._last_left)
-        R = level_to_byte(self._last_right)
+        min_db = float(getattr(self.vu_widget, 'min_db', -60.0))
+        L = level_to_byte_db(self._last_left, min_db)
+        R = level_to_byte_db(self._last_right, min_db)
         b = list(self._last_bands) if isinstance(self._last_bands, (list, tuple)) else [0]*6
         while len(b) < 6:
             b.append(0.0)
         Llow, Lmid, Lhigh, Rlow, Rmid, Rhigh = b[:6]
+        # Order: LH LM LL L R RL RM RH
         bytes_list = [
-            level_to_byte(Llow),
-            level_to_byte(Lmid),
-            level_to_byte(Lhigh),
-            level_to_byte(Rlow),
-            level_to_byte(Rmid),
-            level_to_byte(Rhigh),
+            level_to_byte_db(Lhigh, min_db),
+            level_to_byte_db(Lmid, min_db),
+            level_to_byte_db(Llow, min_db),
             L,
             R,
+            level_to_byte_db(Rlow, min_db),
+            level_to_byte_db(Rmid, min_db),
+            level_to_byte_db(Rhigh, min_db),
         ]
         # Overlay beat: set LSB (0x01) when beat is active for that target
         try:
-            keys = ['Llow','Lmid','Lhigh','Rlow','Rmid','Rhigh','L','R']
+            # Beat key order must match bytes_list order above
+            keys = ['Lhigh','Lmid','Llow','L','R','Rlow','Rmid','Rhigh']
             now = time.monotonic()
             tempo = getattr(self.vu_widget, '_tempo', {})
             for i, k in enumerate(keys):
@@ -931,17 +955,28 @@ class LedBitsWindow(QWidget):
     def update_bits(self, byte_list):
         if not isinstance(byte_list, (list, tuple)) or len(byte_list) != 8:
             return
-        for i in range(8):
-            val = int(byte_list[i]) & 0xFF
-            bits, hex_lbl = self.rows[i]
-            # show MSB..LSB visually
-            for j in range(8):
-                mask = 1 << (7 - j)
-                on = (val & mask) != 0
-                bits[j].setStyleSheet(
-                    "border:1px solid #333; background:" + ("#39FF14" if on else "#222") + ";"
-                )
-            hex_lbl.setText(f"0x{val:02X}")
+        # Fallback: if vertical columns not initialized, keep legacy rows
+        if hasattr(self, '_cols'):
+            for i in range(8):
+                val = int(byte_list[i]) & 0xFF
+                bits_bottom_up, hex_lbl = self._cols[i]
+                for j in range(8):
+                    on = (val & (1 << j)) != 0  # j=0 bottom LED
+                    bits_bottom_up[j].setStyleSheet(
+                        "border:1px solid #333; background:" + ("#39FF14" if on else "#222") + ";"
+                    )
+                hex_lbl.setText(f"0x{val:02X}")
+        else:
+            for i in range(8):
+                val = int(byte_list[i]) & 0xFF
+                bits, hex_lbl = self.rows[i]
+                for j in range(8):
+                    mask = 1 << (7 - j)
+                    on = (val & mask) != 0
+                    bits[j].setStyleSheet(
+                        "border:1px solid #333; background:" + ("#39FF14" if on else "#222") + ";"
+                    )
+                hex_lbl.setText(f"0x{val:02X}")
 
     def on_tempo_params_changed(self):
         try:
