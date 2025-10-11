@@ -300,18 +300,21 @@ class VUMeterWidget(QWidget):
             bar.setStyleSheet(self.left_bar.styleSheet())
             db_lab = QLabel("0.0 dB")
             db_lab.setFixedWidth(70)
+            bpm_lab = QLabel("-- BPM")
+            bpm_lab.setFixedWidth(70)
             row.addWidget(light)
             row.addWidget(lab)
             row.addWidget(bar)
             row.addWidget(db_lab)
-            return row, light, bar, db_lab
+            row.addWidget(bpm_lab)
+            return row, light, bar, db_lab, bpm_lab
 
-        self.l_low_row, self.l_low_light, self.l_low_bar, self.l_low_db = make_band_row("L Low:")
-        self.l_mid_row, self.l_mid_light, self.l_mid_bar, self.l_mid_db = make_band_row("L Mid:")
-        self.l_high_row, self.l_high_light, self.l_high_bar, self.l_high_db = make_band_row("L High:")
-        self.r_low_row, self.r_low_light, self.r_low_bar, self.r_low_db = make_band_row("R Low:")
-        self.r_mid_row, self.r_mid_light, self.r_mid_bar, self.r_mid_db = make_band_row("R Mid:")
-        self.r_high_row, self.r_high_light, self.r_high_bar, self.r_high_db = make_band_row("R High:")
+        self.l_low_row, self.l_low_light, self.l_low_bar, self.l_low_db, self.l_low_bpm = make_band_row("L Low:")
+        self.l_mid_row, self.l_mid_light, self.l_mid_bar, self.l_mid_db, self.l_mid_bpm = make_band_row("L Mid:")
+        self.l_high_row, self.l_high_light, self.l_high_bar, self.l_high_db, self.l_high_bpm = make_band_row("L High:")
+        self.r_low_row, self.r_low_light, self.r_low_bar, self.r_low_db, self.r_low_bpm = make_band_row("R Low:")
+        self.r_mid_row, self.r_mid_light, self.r_mid_bar, self.r_mid_db, self.r_mid_bpm = make_band_row("R Mid:")
+        self.r_high_row, self.r_high_light, self.r_high_bar, self.r_high_db, self.r_high_bpm = make_band_row("R High:")
 
         for row in (self.l_low_row, self.l_mid_row, self.l_high_row,
                     self.r_low_row, self.r_mid_row, self.r_high_row):
@@ -416,6 +419,16 @@ class VUMeterWidget(QWidget):
         for k, v, w in zip(keys, vals, lights):
             self._update_tempo(k, v)
             self._apply_light(k, w)
+        # BPM etiketleri (bantlar)
+        try:
+            self.l_low_bpm.setText(self._bpm_text('Llow'))
+            self.l_mid_bpm.setText(self._bpm_text('Lmid'))
+            self.l_high_bpm.setText(self._bpm_text('Lhigh'))
+            self.r_low_bpm.setText(self._bpm_text('Rlow'))
+            self.r_mid_bpm.setText(self._bpm_text('Rmid'))
+            self.r_high_bpm.setText(self._bpm_text('Rhigh'))
+        except Exception:
+            pass
 
     def _bpm_text(self, key: str) -> str:
         s = self._tempo.get(key)
