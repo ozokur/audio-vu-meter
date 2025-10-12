@@ -810,6 +810,12 @@ class VUMeterApp(QMainWindow):
             self.led_window.show()
         except Exception:
             pass
+        # Big lights window (large indicators for L/R and 6 bands)
+        try:
+            self.big_lights_window = BigLightsWindow()
+            self.big_lights_window.show()
+        except Exception:
+            self.big_lights_window = None
         self.ser = None
         self._serial_port_name = None
         self._serial_baud = 9600
@@ -1058,6 +1064,21 @@ class VUMeterApp(QMainWindow):
                 pass
             try:
                 self._send_light_bytes(light_frame)
+            except Exception:
+                pass
+            # Update big lights window colors
+            try:
+                if hasattr(self, 'big_lights_window') and self.big_lights_window:
+                    now = time.monotonic()
+                    tempo = getattr(self.vu_widget, '_tempo', {})
+                    # Order: L, R, Llow, Lmid, Lhigh, Rlow, Rmid, Rhigh
+                    keys = ['L','R','Llow','Lmid','Lhigh','Rlow','Rmid','Rhigh']
+                    states = {}
+                    for k in keys:
+                        s = tempo.get(k)
+                        on = (s is not None) and (now < float(s.get('on_until', 0.0)))
+                        states[k] = on
+                    self.big_lights_window.update_lights(states)
             except Exception:
                 pass
         except Exception:
@@ -1333,6 +1354,73 @@ class LedBitsWindow(QWidget):
 
     def closeEvent(self, event):
         event.accept()
+
+
+class BigLightsWindow(QWidget):
+    """Separate window to display large lights for L/R and 6 bands."""
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Big Lights")
+        self.setGeometry(180, 180, 520, 180)
+        layout = QVBoxLayout()
+        title = QLabel("Large Channel/Band Lights")
+        title.setStyleSheet("font-weight:bold; padding:6px;")
+        layout.addWidget(title)
+        row1 = QHBoxLayout()
+        row2 = QHBoxLayout()
+        # Create lights and labels in two rows
+        self._keys = ['L','R','Llow','Lmid','Lhigh','Rlow','Rmid','Rhigh']
+        self._labs = {}
+        def make_light(text):
+            box = QVBoxLayout()
+            lamp = QLabel()
+            lamp.setFixedSize(42, 42)
+            lamp.setStyleSheet("border-radius:21px; background-color:#555; border:2px solid #333;")
+            cap = QLabel(text)
+            cap.setStyleSheet("padding-top:4px; text-align:center;")
+            cap.setFixedWidth(70)
+            cap.setAlignment(Qt.AlignCenter) if 'Qt' in globals() else None
+            box.addWidget(lamp)
+            box.addWidget(cap)
+            return box, lamp
+        # First row: L, R, Llow, Lmid
+        for txt in ('L','R','L Low','L Mid'):
+            box, lamp = make_light(txt)
+            row1.addLayout(box)
+            key = {'L':'L','R':'R','L Low':'Llow','L Mid':'Lmid'}[txt]
+            self._labs[key] = lamp
+        # Second row: Lhigh, Rlow, Rmid, Rhigh
+        for txt in ('L High','R Low','R Mid','R High'):
+            box, lamp = make_light(txt)
+            row2.addLayout(box)
+            key = {'L High':'Lhigh','R Low':'Rlow','R Mid':'Rmid','R High':'Rhigh'}[txt]
+            self._labs[key] = lamp
+        layout.addLayout(row1)
+        layout.addLayout(row2)
+        self.setLayout(layout)
+
+    def _color_for_key(self, key: str, on: bool) -> str:
+        if not on:
+            return "#555"
+        if key in ('L','R'):
+            return "#39FF14"
+        lk = key.lower()
+        if 'low' in lk:
+            return "#1E90FF"
+        if 'mid' in lk:
+            return "#FFD700"
+        if 'high' in lk:
+            return "#FF4500"
+        return "#39FF14"
+
+    def update_lights(self, states: dict):
+        try:
+            for k, lamp in self._labs.items():
+                on = bool(states.get(k, False)) if isinstance(states, dict) else False
+                col = self._color_for_key(k, on)
+                lamp.setStyleSheet(f"border-radius:21px; background-color:{col}; border:2px solid #333;")
+        except Exception:
+            pass
 
 
 def main():
