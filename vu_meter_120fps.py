@@ -639,29 +639,34 @@ class VUMeterWidget(QWidget):
                     self._range_cfg = {kk: {"min_db": -60.0, "max_db": 0.0, "one_shot": False, "shot_ms": 120}
                                        for kk in keys}
                 if not hasattr(self, '_range_state'):
-                    self._range_state = {kk: {"prev_in": False} for kk in keys}
+                    self._range_state = {kk: {"armed": True} for kk in keys}
                 for idx, (k, w) in enumerate(zip(keys, lights)):
                     dbv = dbs[idx]
                     cfg = self._range_cfg.get(k, {"min_db": -60.0, "max_db": 0.0, "one_shot": False, "shot_ms": 120})
                     lo = float(cfg.get("min_db", -60.0)); hi = float(cfg.get("max_db", 0.0))
                     if lo > hi:
                         lo, hi = hi, lo
-                    in_range = np.isfinite(dbv) and (dbv >= lo) and (dbv <= hi)
-                    st = self._range_state.setdefault(k, {"prev_in": False})
+                    is_finite = np.isfinite(dbv)
+                    in_range = is_finite and (dbv >= lo) and (dbv <= hi)
+                    below = is_finite and (dbv < lo)
+                    st = self._range_state.setdefault(k, {"armed": True})
                     s = self._tempo.get(k)
                     if s is None:
                         continue
                     if bool(cfg.get("one_shot", False)):
-                        if in_range and not st.get("prev_in", False):
+                        # Re-arm only after dropping below min
+                        if below:
+                            st['armed'] = True
+                        if in_range and st.get('armed', True):
                             dur = max(0, int(cfg.get("shot_ms", 120))) / 1000.0
                             s['on_until'] = now + dur
-                        st['prev_in'] = in_range
+                            st['armed'] = False
                     else:
+                        # While in range keep on; out of range turns off
                         if in_range:
                             s['on_until'] = now + 0.08
                         else:
                             s['on_until'] = now - 1.0
-                        st['prev_in'] = in_range
                     self._apply_light(k, w)
         except Exception:
             pass
