@@ -1216,46 +1216,9 @@ class LedBitsWindow(QWidget):
                     )
                 hex_lbl.setText(f"0x{val:02X}")
 
-    def on_tempo_params_changed(self):
-        try:
-            target = self.tempo_target.currentData()
-            alpha = float(self.tempo_alpha.value())
-            delta = float(self.tempo_thr.value())
-            hold_s = float(self.tempo_hold.value()) / 1000.0
-            min_s = float(self.tempo_min.value()) / 1000.0
-            auto = bool(self.tempo_auto.isChecked())
-        except Exception:
-            return
-        try:
-            if target is None:
-                return
-            self.vu_widget.set_tempo_params_for(str(target), alpha=alpha, delta=delta,
-                                                min_interval_s=min_s, hold_s=hold_s,
-                                                auto=auto)
-        except Exception:
-            pass
-
-    def on_tempo_target_changed(self):
-        try:
-            target = self.tempo_target.currentData()
-            if target is None:
-                return
-            params = self.vu_widget.get_tempo_params_for(str(target))
-            self.tempo_alpha.setValue(float(params.get('alpha', 0.2)))
-            self.tempo_thr.setValue(float(params.get('delta', 0.08)))
-            self.tempo_min.setValue(float(params.get('min_interval', 0.25)) * 1000.0)
-            self.tempo_hold.setValue(float(params.get('hold', 0.12)) * 1000.0)
-            self.tempo_auto.setChecked(bool(params.get('auto', False)))
-        except Exception:
-            pass
-
-    def on_error(self, error_msg):
-        self.status_label.setText(f"Hata: {error_msg}")
-        self.status_label.setStyleSheet("padding: 5px; background-color: #FFB6C1;")
-        self.stop_monitoring()
+    # No tempo or status handling here; this window only renders bytes.
 
     def closeEvent(self, event):
-        self.audio_monitor.stop()
         event.accept()
 
 
