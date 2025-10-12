@@ -347,6 +347,75 @@ class VUMeterWidget(QWidget):
 
         layout.addLayout(bands_layout)
         
+        # Range-based light controls
+        range_ctl = QHBoxLayout()
+        range_ctl.addWidget(QLabel("Range Target:"))
+        self.range_target = QComboBox()
+        for key in ("Llow","Lmid","Lhigh","Rlow","Rmid","Rhigh"):
+            self.range_target.addItem(key, key)
+        range_ctl.addWidget(self.range_target)
+        range_ctl.addWidget(QLabel("Min dB:"))
+        self.range_min_db = QDoubleSpinBox()
+        self.range_min_db.setRange(-120.0, 0.0)
+        self.range_min_db.setSingleStep(1.0)
+        self.range_min_db.setValue(-60.0)
+        range_ctl.addWidget(self.range_min_db)
+        range_ctl.addWidget(QLabel("Max dB:"))
+        self.range_max_db = QDoubleSpinBox()
+        self.range_max_db.setRange(-120.0, 0.0)
+        self.range_max_db.setSingleStep(1.0)
+        self.range_max_db.setValue(0.0)
+        range_ctl.addWidget(self.range_max_db)
+        self.range_one_shot = QCheckBox("One Shot")
+        range_ctl.addWidget(self.range_one_shot)
+        range_ctl.addWidget(QLabel("Shot ms:"))
+        self.range_shot_ms = QSpinBox()
+        self.range_shot_ms.setRange(1, 10000)
+        self.range_shot_ms.setSingleStep(10)
+        self.range_shot_ms.setValue(120)
+        range_ctl.addWidget(self.range_shot_ms)
+        self.range_enable = QCheckBox("Range Lights Enable")
+        self.range_enable.setChecked(False)
+        range_ctl.addWidget(self.range_enable)
+        range_ctl.addStretch()
+        layout.addLayout(range_ctl)
+
+        # Backend store for range configs and state
+        self._range_cfg = {k: {"min_db": -60.0, "max_db": 0.0, "one_shot": False, "shot_ms": 120}
+                           for k in ("Llow","Lmid","Lhigh","Rlow","Rmid","Rhigh")}
+        self._range_state = {k: {"prev_in": False} for k in self._range_cfg.keys()}
+
+        def _apply_range_ui_to_cfg():
+            try:
+                key = self.range_target.currentData() or "Llow"
+                cfg = self._range_cfg[str(key)]
+                cfg["min_db"] = float(self.range_min_db.value())
+                cfg["max_db"] = float(self.range_max_db.value())
+                if cfg["min_db"] > cfg["max_db"]:
+                    cfg["min_db"], cfg["max_db"] = cfg["max_db"], cfg["min_db"]
+                cfg["one_shot"] = bool(self.range_one_shot.isChecked())
+                cfg["shot_ms"] = int(self.range_shot_ms.value())
+            except Exception:
+                pass
+
+        def _refresh_range_ui_from_cfg():
+            try:
+                key = self.range_target.currentData() or "Llow"
+                cfg = self._range_cfg[str(key)]
+                self.range_min_db.setValue(float(cfg.get("min_db", -60.0)))
+                self.range_max_db.setValue(float(cfg.get("max_db", 0.0)))
+                self.range_one_shot.setChecked(bool(cfg.get("one_shot", False)))
+                self.range_shot_ms.setValue(int(cfg.get("shot_ms", 120)))
+            except Exception:
+                pass
+
+        self.range_target.currentIndexChanged.connect(_refresh_range_ui_from_cfg)
+        self.range_min_db.valueChanged.connect(_apply_range_ui_to_cfg)
+        self.range_max_db.valueChanged.connect(_apply_range_ui_to_cfg)
+        self.range_one_shot.stateChanged.connect(_apply_range_ui_to_cfg)
+        self.range_shot_ms.valueChanged.connect(_apply_range_ui_to_cfg)
+        _refresh_range_ui_from_cfg()
+        
         # Peak hold control (milliseconds, 1 .. 10000 ms)
         ctl_row = QHBoxLayout()
         ctl_row.addWidget(QLabel("Peak Hold ms:"))
@@ -562,6 +631,40 @@ class VUMeterWidget(QWidget):
         for k, v, w in zip(keys, vals, lights):
             self._update_tempo(k, v)
             self._apply_light(k, w)
+        # If range-controlled lights enabled, override band lights based on range
+        try:
+            if hasattr(self, 'range_enable') and bool(self.range_enable.isChecked()):
+                now = time.monotonic()
+                if not hasattr(self, '_range_cfg'):
+                    self._range_cfg = {kk: {"min_db": -60.0, "max_db": 0.0, "one_shot": False, "shot_ms": 120}
+                                       for kk in keys}
+                if not hasattr(self, '_range_state'):
+                    self._range_state = {kk: {"prev_in": False} for kk in keys}
+                for idx, (k, w) in enumerate(zip(keys, lights)):
+                    dbv = dbs[idx]
+                    cfg = self._range_cfg.get(k, {"min_db": -60.0, "max_db": 0.0, "one_shot": False, "shot_ms": 120})
+                    lo = float(cfg.get("min_db", -60.0)); hi = float(cfg.get("max_db", 0.0))
+                    if lo > hi:
+                        lo, hi = hi, lo
+                    in_range = np.isfinite(dbv) and (dbv >= lo) and (dbv <= hi)
+                    st = self._range_state.setdefault(k, {"prev_in": False})
+                    s = self._tempo.get(k)
+                    if s is None:
+                        continue
+                    if bool(cfg.get("one_shot", False)):
+                        if in_range and not st.get("prev_in", False):
+                            dur = max(0, int(cfg.get("shot_ms", 120))) / 1000.0
+                            s['on_until'] = now + dur
+                        st['prev_in'] = in_range
+                    else:
+                        if in_range:
+                            s['on_until'] = now + 0.08
+                        else:
+                            s['on_until'] = now - 1.0
+                        st['prev_in'] = in_range
+                    self._apply_light(k, w)
+        except Exception:
+            pass
         # BPM etiketleri (bantlar)
         try:
             self.l_low_bpm.setText(self._bpm_text('Llow'))
