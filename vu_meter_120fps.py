@@ -1112,7 +1112,7 @@ class VUMeterApp(QMainWindow):
             self._ensure_serial()
             if not self.ser or not self.ser.is_open:
                 return
-            payload = bytes(int(x) & 0xFF for x in bytes_list)
+            payload = bytes([0xA0]) + bytes(int(x) & 0xFF for x in bytes_list)
             self.ser.write(payload)
         except Exception:
             pass
@@ -1125,7 +1125,7 @@ class VUMeterApp(QMainWindow):
             self._ensure_serial()
             if not self.ser or not self.ser.is_open:
                 return
-            payload = bytes(int(x) & 0xFF for x in bytes_list)
+            payload = bytes([0xB0]) + bytes(int(x) & 0xFF for x in bytes_list)
             self.ser.write(payload)
         except Exception:
             pass
