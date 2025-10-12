@@ -10,6 +10,7 @@ import logging
 from logging.handlers import RotatingFileHandler
 import numpy as np
 import time
+import json
 try:
     import pyaudiowpatch as pyaudio
 except ImportError:
@@ -395,6 +396,8 @@ class VUMeterWidget(QWidget):
                     cfg["min_db"], cfg["max_db"] = cfg["max_db"], cfg["min_db"]
                 cfg["one_shot"] = bool(self.range_one_shot.isChecked())
                 cfg["shot_ms"] = int(self.range_shot_ms.value())
+                # persist
+                self.save_range_cfg()
             except Exception:
                 pass
 
@@ -414,7 +417,19 @@ class VUMeterWidget(QWidget):
         self.range_max_db.valueChanged.connect(_apply_range_ui_to_cfg)
         self.range_one_shot.stateChanged.connect(_apply_range_ui_to_cfg)
         self.range_shot_ms.valueChanged.connect(_apply_range_ui_to_cfg)
+        # Persist on enable toggle
+        self.range_enable.stateChanged.connect(lambda *_: self.save_range_cfg())
+        # Try load persisted cfg and update UI
+        try:
+            loaded = self.load_range_cfg()
+        except Exception:
+            loaded = None
         _refresh_range_ui_from_cfg()
+        if isinstance(loaded, dict) and 'range_enable' in loaded:
+            try:
+                self.range_enable.setChecked(bool(loaded.get('range_enable')))
+            except Exception:
+                pass
         
         # Peak hold control (milliseconds, 1 .. 10000 ms)
         ctl_row = QHBoxLayout()
@@ -431,6 +446,54 @@ class VUMeterWidget(QWidget):
         ctl_row.addStretch()
         layout.addLayout(ctl_row)
         self.setLayout(layout)
+
+    # --- Range config persistence ---
+    def _range_cfg_path(self) -> str:
+        try:
+            base = os.path.dirname(__file__)
+        except Exception:
+            base = os.getcwd()
+        return os.path.join(base, "range_cfg.json")
+
+    def load_range_cfg(self):
+        path = self._range_cfg_path()
+        try:
+            if not os.path.exists(path):
+                return None
+            with open(path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            cfg = data.get('range_cfg')
+            if isinstance(cfg, dict):
+                for k in ("Llow","Lmid","Lhigh","Rlow","Rmid","Rhigh"):
+                    v = cfg.get(k)
+                    if isinstance(v, dict):
+                        self._range_cfg[k].update({
+                            'min_db': float(v.get('min_db', self._range_cfg[k]['min_db'])),
+                            'max_db': float(v.get('max_db', self._range_cfg[k]['max_db'])),
+                            'one_shot': bool(v.get('one_shot', self._range_cfg[k]['one_shot'])),
+                            'shot_ms': int(v.get('shot_ms', self._range_cfg[k]['shot_ms'])),
+                        })
+            ren = data.get('range_enable')
+            if isinstance(ren, bool) and hasattr(self, 'range_enable'):
+                try:
+                    self.range_enable.setChecked(ren)
+                except Exception:
+                    pass
+            return data
+        except Exception:
+            return None
+
+    def save_range_cfg(self):
+        path = self._range_cfg_path()
+        try:
+            data = {
+                'range_enable': bool(self.range_enable.isChecked()) if hasattr(self, 'range_enable') else False,
+                'range_cfg': self._range_cfg,
+            }
+            with open(path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
 
     def on_peak_hold_changed(self):
         try:
@@ -1289,6 +1352,15 @@ class VUMeterApp(QMainWindow):
         pass
 
     def closeEvent(self, event):
+        try:
+            if hasattr(self, 'vu_widget'):
+                self.vu_widget.save_range_cfg()
+        except Exception:
+            pass
+        try:
+            self.audio_monitor.stop()
+        except Exception:
+            pass
         event.accept()
 
 
