@@ -384,8 +384,6 @@ class VUMeterWidget(QWidget):
         self._range_cfg = {k: {"min_db": -60.0, "max_db": 0.0, "one_shot": False, "shot_ms": 120}
                            for k in ("Llow","Lmid","Lhigh","Rlow","Rmid","Rhigh")}
         self._range_state = {k: {"prev_in": False} for k in self._range_cfg.keys()}
-        # Hysteresis (dB) for range entry/exit to avoid flicker
-        self.range_hyst_db = 1.0
 
         def _apply_range_ui_to_cfg():
             try:
@@ -411,21 +409,11 @@ class VUMeterWidget(QWidget):
             except Exception:
                 pass
 
-        # Add hysteresis control
-        range_ctl.addWidget(QLabel("Hyst dB:"))
-        self.range_hyst_db_spin = QDoubleSpinBox()
-        self.range_hyst_db_spin.setRange(0.0, 10.0)
-        self.range_hyst_db_spin.setSingleStep(0.1)
-        self.range_hyst_db_spin.setDecimals(1)
-        self.range_hyst_db_spin.setValue(1.0)
-        range_ctl.addWidget(self.range_hyst_db_spin)
-
         self.range_target.currentIndexChanged.connect(_refresh_range_ui_from_cfg)
         self.range_min_db.valueChanged.connect(_apply_range_ui_to_cfg)
         self.range_max_db.valueChanged.connect(_apply_range_ui_to_cfg)
         self.range_one_shot.stateChanged.connect(_apply_range_ui_to_cfg)
         self.range_shot_ms.valueChanged.connect(_apply_range_ui_to_cfg)
-        self.range_hyst_db_spin.valueChanged.connect(lambda _: setattr(self, 'range_hyst_db', float(self.range_hyst_db_spin.value())))
         _refresh_range_ui_from_cfg()
         
         # Peak hold control (milliseconds, 1 .. 10000 ms)
@@ -651,48 +639,34 @@ class VUMeterWidget(QWidget):
                     self._range_cfg = {kk: {"min_db": -60.0, "max_db": 0.0, "one_shot": False, "shot_ms": 120}
                                        for kk in keys}
                 if not hasattr(self, '_range_state'):
-                    self._range_state = {kk: {"armed": True, "in": False} for kk in keys}
+                    self._range_state = {kk: {"armed": True} for kk in keys}
                 for idx, (k, w) in enumerate(zip(keys, lights)):
                     dbv = dbs[idx]
                     cfg = self._range_cfg.get(k, {"min_db": -60.0, "max_db": 0.0, "one_shot": False, "shot_ms": 120})
                     lo = float(cfg.get("min_db", -60.0)); hi = float(cfg.get("max_db", 0.0))
                     if lo > hi:
                         lo, hi = hi, lo
-                    # Hysteresis
-                    h = float(getattr(self, 'range_hyst_db', 1.0))
-                    enter_lo = lo + h; enter_hi = hi - h
-                    exit_lo = lo - h;  exit_hi = hi + h
-                    # If band too narrow, fall back to hard bounds
-                    if enter_lo > enter_hi:
-                        enter_lo, enter_hi = lo, hi
                     is_finite = np.isfinite(dbv)
-                    in_range_enter = is_finite and (dbv >= enter_lo) and (dbv <= enter_hi)
-                    below_exit = is_finite and (dbv < exit_lo)
-                    out_exit = is_finite and ((dbv < exit_lo) or (dbv > exit_hi))
-                    st = self._range_state.setdefault(k, {"armed": True, "in": False})
+                    in_range = is_finite and (dbv >= lo) and (dbv <= hi)
+                    below = is_finite and (dbv < lo)
+                    st = self._range_state.setdefault(k, {"armed": True})
                     s = self._tempo.get(k)
                     if s is None:
                         continue
                     if bool(cfg.get("one_shot", False)):
-                        # Re-arm only after dropping below (min - h)
-                        if below_exit:
+                        # Re-arm only after dropping below min
+                        if below:
                             st['armed'] = True
-                        if in_range_enter and st.get('armed', True):
+                        if in_range and st.get('armed', True):
                             dur = max(0, int(cfg.get("shot_ms", 120))) / 1000.0
                             s['on_until'] = now + dur
                             st['armed'] = False
                     else:
-                        # Continuous: enter window with margin, exit outside margin
-                        if st.get('in', False):
-                            if out_exit:
-                                s['on_until'] = now - 1.0
-                                st['in'] = False
-                            else:
-                                s['on_until'] = now + 0.08
+                        # While in range keep on; out of range turns off
+                        if in_range:
+                            s['on_until'] = now + 0.08
                         else:
-                            if in_range_enter:
-                                s['on_until'] = now + 0.08
-                                st['in'] = True
+                            s['on_until'] = now - 1.0
                     self._apply_light(k, w)
         except Exception:
             pass
