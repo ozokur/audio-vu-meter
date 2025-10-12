@@ -205,6 +205,7 @@ class VUMeterWidget(QWidget):
         self.peak_right = 0.0
         self.min_db = -60.0
         self.peak_hold_ms = 1000
+        self.peak_hold_enabled = False  # disable peak-hold by default
         self.peak_decay_dbps = 10.0  # dB per second decay after hold
         self.bands = [0.0] * 6  # Llow, Lmid, Lhigh, Rlow, Rmid, Rhigh
         # Tempo parametreleri
@@ -354,6 +355,9 @@ class VUMeterWidget(QWidget):
         self.peak_hold_spin.setSingleStep(1)
         self.peak_hold_spin.setValue(1000)
         self.peak_hold_spin.valueChanged.connect(self.on_peak_hold_changed)
+        # Disable control when feature is off
+        self.peak_hold_spin.setEnabled(False)
+        self.peak_hold_spin.setToolTip("Peak-hold devre dışı (ms kullanılmıyor)")
         ctl_row.addWidget(self.peak_hold_spin)
         ctl_row.addStretch()
         layout.addLayout(ctl_row)
@@ -401,7 +405,8 @@ class VUMeterWidget(QWidget):
 
         # Peak-and-hold per channel with slow decay after hold
         now = time.monotonic()
-        hold_s = getattr(self, 'peak_hold_ms', 1000) / 1000.0 if hasattr(self, 'peak_hold_ms') else 1.0
+        # Respect disable flag: when off, behave instantaneous (no hold)
+        hold_s = 0.0 if not getattr(self, 'peak_hold_enabled', False) else (float(getattr(self, 'peak_hold_ms', 1000)) / 1000.0)
         if not hasattr(self, '_last_peak_t'):
             self._last_peak_t = now
         dt = max(0.0, now - self._last_peak_t)
@@ -505,7 +510,7 @@ class VUMeterWidget(QWidget):
 
         # Peak-and-hold for bands with slow decay
         now = time.monotonic()
-        hold_s = getattr(self, 'peak_hold_ms', 1000) / 1000.0 if hasattr(self, 'peak_hold_ms') else 1.0
+        hold_s = 0.0 if not getattr(self, 'peak_hold_enabled', False) else (float(getattr(self, 'peak_hold_ms', 1000)) / 1000.0)
         if not hasattr(self, '_band_peak_vals'):
             self._band_peak_vals = [0.0]*6
             self._band_peak_until = [0.0]*6
