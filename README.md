@@ -1,4 +1,4 @@
-﻿# Audio VU Meter GUI
+# Audio VU Meter GUI
 
 Ses kartÄ±ndan gerÃ§ek zamanlÄ± ses seviyesi (VU - Volume Unit) verisini okuyup hÄ±zlÄ± ve gÃ¶rsel ÅŸekilde gÃ¶steren bir Python uygulamasÄ±. Hem mikrofon giriÅŸini hem de sistem ses Ã§Ä±kÄ±ÅŸÄ±nÄ± (Edge, YouTube, mÃ¼zik Ã§alar vb.) izleyebilirsiniz.
 

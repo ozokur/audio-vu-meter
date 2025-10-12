@@ -3,6 +3,12 @@
 All notable changes to this project will be documented in this file.
 This project uses Semantic Versioning (MAJOR.MINOR.PATCH) and a Keep a Changelog‑style format.
 
+## [1.5.0] - 2025-10-12
+- Peak-hold control now in milliseconds with 1 ms steps (1–10000 ms, default 1000 ms) in `vu_meter_120fps.py`.
+- Added per-channel byte display next to L/R bars (level bytes).
+- Added separate 8-byte frame for light states (L, R, Llow, Lmid, Lhigh, Rlow, Rmid, Rhigh) and inline hex display.
+- Minor UI polish on inline LED/Light byte sections.
+
 ## [1.3.0] - 2025-10-11
 - Add per-band BPM labels (L/R low/mid/high) next to dB values.
 - Add per-target tempo parameters (alpha, delta, min, hold) with optional auto-threshold.
@@ -26,4 +32,3 @@ This project uses Semantic Versioning (MAJOR.MINOR.PATCH) and a Keep a Changelog
 - Initial GUI with basic stereo VU, peak display, device selection.
 ## [1.4.0] - 2025-10-11
 - Enable auto beat detection by default on all channels/bands (L, R, Llow/Lmid/Lhigh, Rlow/Rmid/Rhigh) with tuned parameters (alpha=0.15, k=0.8, min=0.20s, hold=0.10s).
-

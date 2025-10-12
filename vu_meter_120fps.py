@@ -20,7 +20,7 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import QTimer, pyqtSignal, QObject
 
-__version__ = "1.4.0"
+__version__ = "1.5.0"
 
 
 # Logging
@@ -260,6 +260,8 @@ class VUMeterWidget(QWidget):
         """)
         self.left_db_label = QLabel("0.0 dB")
         self.left_db_label.setFixedWidth(70)
+        self.left_byte_label = QLabel("0x00")
+        self.left_byte_label.setFixedWidth(48)
         self.left_bpm_label = QLabel("-- BPM")
         self.left_bpm_label.setFixedWidth(70)
         self.left_peak_hold_label = QLabel("Pk -- dB")
@@ -268,6 +270,7 @@ class VUMeterWidget(QWidget):
         left_layout.addWidget(left_label)
         left_layout.addWidget(self.left_bar)
         left_layout.addWidget(self.left_db_label)
+        left_layout.addWidget(self.left_byte_label)
         left_layout.addWidget(self.left_bpm_label)
         left_layout.addWidget(self.left_peak_hold_label)
 
@@ -281,6 +284,8 @@ class VUMeterWidget(QWidget):
         self.right_bar.setStyleSheet(self.left_bar.styleSheet())
         self.right_db_label = QLabel("0.0 dB")
         self.right_db_label.setFixedWidth(70)
+        self.right_byte_label = QLabel("0x00")
+        self.right_byte_label.setFixedWidth(48)
         self.right_bpm_label = QLabel("-- BPM")
         self.right_bpm_label.setFixedWidth(70)
         self.right_peak_hold_label = QLabel("Pk -- dB")
@@ -289,6 +294,7 @@ class VUMeterWidget(QWidget):
         right_layout.addWidget(right_label)
         right_layout.addWidget(self.right_bar)
         right_layout.addWidget(self.right_db_label)
+        right_layout.addWidget(self.right_byte_label)
         right_layout.addWidget(self.right_bpm_label)
         right_layout.addWidget(self.right_peak_hold_label)
 
@@ -340,14 +346,13 @@ class VUMeterWidget(QWidget):
 
         layout.addLayout(bands_layout)
         
-        # Peak hold control (seconds, 0.1 .. 10.0)
+        # Peak hold control (milliseconds, 1 .. 10000 ms)
         ctl_row = QHBoxLayout()
-        ctl_row.addWidget(QLabel("Peak Hold s:"))
-        self.peak_hold_spin = QDoubleSpinBox()
-        self.peak_hold_spin.setDecimals(1)
-        self.peak_hold_spin.setRange(0.0, 10.0)
-        self.peak_hold_spin.setSingleStep(0.1)
-        self.peak_hold_spin.setValue(1.0)
+        ctl_row.addWidget(QLabel("Peak Hold ms:"))
+        self.peak_hold_spin = QSpinBox()
+        self.peak_hold_spin.setRange(1, 10000)
+        self.peak_hold_spin.setSingleStep(1)
+        self.peak_hold_spin.setValue(1000)
         self.peak_hold_spin.valueChanged.connect(self.on_peak_hold_changed)
         ctl_row.addWidget(self.peak_hold_spin)
         ctl_row.addStretch()
@@ -356,9 +361,9 @@ class VUMeterWidget(QWidget):
 
     def on_peak_hold_changed(self):
         try:
-            # peak_hold_spin is in seconds with 0.1 resolution
-            seconds = float(self.peak_hold_spin.value())
-            self.set_peak_hold_ms(int(max(0.0, seconds) * 1000.0))
+            # peak_hold_spin is in milliseconds with 1 ms resolution
+            ms = int(self.peak_hold_spin.value())
+            self.set_peak_hold_ms(max(0, ms))
         except Exception:
             pass
 
@@ -458,6 +463,28 @@ class VUMeterWidget(QWidget):
             lpk = -float('inf'); rpk = -float('inf')
         self.left_peak_hold_label.setText(f"Pk {lpk:.1f} dB")
         self.right_peak_hold_label.setText(f"Pk {rpk:.1f} dB")
+        # Channel bytes (each channel’s LEDs as a byte)
+        try:
+            def _level_to_byte_db(v: float, min_db: float) -> int:
+                v = 0.0 if not np.isfinite(v) else max(0.0, min(1.0, float(v)))
+                dbv = -float('inf') if v <= 1e-12 else 20.0 * np.log10(v)
+                if not np.isfinite(dbv) or dbv <= self.min_db:
+                    n = 0
+                elif dbv >= 0.0:
+                    n = 8
+                else:
+                    pct = (dbv - self.min_db) / (0.0 - self.min_db)
+                    n = int(round(pct * 8))
+                n = max(0, min(8, n))
+                return (1 << n) - 1 if n > 0 else 0
+
+            l_byte = _level_to_byte_db(self.left_level, self.min_db)
+            r_byte = _level_to_byte_db(self.right_level, self.min_db)
+            if hasattr(self, 'left_byte_label') and hasattr(self, 'right_byte_label'):
+                self.left_byte_label.setText(f"0x{l_byte:02X}")
+                self.right_byte_label.setText(f"0x{r_byte:02X}")
+        except Exception:
+            pass
         # Tempo Ä±ÅŸÄ±klarÄ± (Sol/SaÄŸ)
         self._update_tempo('L', self.left_level)
         self._update_tempo('R', self.right_level)
@@ -800,6 +827,20 @@ class VUMeterApp(QMainWindow):
             inline_cols_row.addLayout(col)
             self.inline_led_cols.append((bits_bottom_up, hx))
         inline_box.addLayout(inline_cols_row)
+        # Separate row to display per-column light bytes (on/off)
+        lights_header = QLabel("Light Bytes (per column)")
+        lights_header.setStyleSheet("font-weight:bold; padding:4px;")
+        inline_box.addWidget(lights_header)
+        lights_row = QHBoxLayout()
+        self._light_hex_labels = []
+        for _ in range(8):
+            hx = QLabel("0x00")
+            hx.setFixedWidth(44)
+            hx.setStyleSheet("padding:2px;")
+            lights_row.addWidget(hx)
+            self._light_hex_labels.append(hx)
+        lights_row.addStretch()
+        inline_box.addLayout(lights_row)
         layout.addLayout(inline_box)
 
         self.vu_widget = VUMeterWidget()
@@ -890,6 +931,22 @@ class VUMeterApp(QMainWindow):
             except Exception:
                 pass
             self._send_led_bytes(frame)
+            # Build and show/send light-only bytes (tempo lights)
+            try:
+                light_frame = self._build_light_bytes()
+            except Exception:
+                light_frame = [0x00]*8
+            try:
+                # Update hex labels for lights
+                if hasattr(self, '_light_hex_labels'):
+                    for i in range(8):
+                        self._light_hex_labels[i].setText(f"0x{(int(light_frame[i]) & 0xFF):02X}")
+            except Exception:
+                pass
+            try:
+                self._send_light_bytes(light_frame)
+            except Exception:
+                pass
         except Exception:
             pass
 
@@ -1001,6 +1058,23 @@ class VUMeterApp(QMainWindow):
             pass
         return bytes_list
 
+    def _build_light_bytes(self):
+        """Build 8 bytes representing only the on/off state of lights for
+        [Lhigh, Lmid, Llow, L, R, Rlow, Rmid, Rhigh]. Each byte is 0x01 if the
+        corresponding light is ON, else 0x00."""
+        try:
+            keys = ['Lhigh','Lmid','Llow','L','R','Rlow','Rmid','Rhigh']
+            now = time.monotonic()
+            tempo = getattr(self.vu_widget, '_tempo', {})
+            out = []
+            for k in keys:
+                s = tempo.get(k)
+                on = (s is not None) and (now < float(s.get('on_until', 0.0)))
+                out.append(0x01 if on else 0x00)
+            return out
+        except Exception:
+            return [0x00]*8
+
     def _init_serial_auto(self):
         """Try to auto-pick first available serial port at 9600."""
         try:
@@ -1032,6 +1106,19 @@ class VUMeterApp(QMainWindow):
             self.ser = None
 
     def _send_led_bytes(self, bytes_list):
+        try:
+            if not isinstance(bytes_list, (list, tuple)) or len(bytes_list) != 8:
+                return
+            self._ensure_serial()
+            if not self.ser or not self.ser.is_open:
+                return
+            payload = bytes(int(x) & 0xFF for x in bytes_list)
+            self.ser.write(payload)
+        except Exception:
+            pass
+
+    def _send_light_bytes(self, bytes_list):
+        """Send an additional 8-byte frame for light states."""
         try:
             if not isinstance(bytes_list, (list, tuple)) or len(bytes_list) != 8:
                 return
