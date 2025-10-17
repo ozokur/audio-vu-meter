@@ -3,6 +3,14 @@
 All notable changes to this project will be documented in this file.
 This project uses Semantic Versioning (MAJOR.MINOR.PATCH) and a Keep a Changelog‑style format.
 
+## [1.6.0] - 2025-10-17
+- **DMX Support:** Added USB DMX (uDMX) control integration
+  - `dmx_controller.py`: DMX512 controller with USB and serial support
+  - Auto-detect uDMX (VID:PID 16c0:05dc) and other USB DMX interfaces
+  - Real-time audio → DMX mapping (master, L/R channels, frequency bands, RGB colors)
+  - UI: DMX toggle button with connection status indicator
+  - Requirements: Added pyusb and libusb dependencies
+
 ## [1.5.0] - 2025-10-12
 - Peak-hold control now in milliseconds with 1 ms steps (1–10000 ms, default 1000 ms) in `vu_meter_120fps.py`.
 - Added per-channel byte display next to L/R bars (level bytes).

@@ -21,7 +21,14 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import QTimer, pyqtSignal, QObject
 
-__version__ = "1.5.0"
+# DMX Controller
+try:
+    from dmx_controller import DMXController
+    DMX_AVAILABLE = True
+except ImportError:
+    DMX_AVAILABLE = False
+
+__version__ = "1.6.0"
 
 
 # Logging
@@ -883,6 +890,12 @@ class VUMeterApp(QMainWindow):
         self._serial_port_name = None
         self._serial_baud = 9600
         self._init_serial_auto()
+        
+        # DMX Controller
+        self.dmx = None
+        self.dmx_enabled = False
+        if DMX_AVAILABLE:
+            self._init_dmx()
 
     def _init_ui(self):
         self.setWindowTitle(f"Audio VU Meter v{__version__}")
@@ -1041,6 +1054,14 @@ class VUMeterApp(QMainWindow):
         self.stop_button.setEnabled(False)
         self.refresh_button = QPushButton("Yenile")
         self.refresh_button.clicked.connect(self.refresh_devices)
+        
+        # DMX button
+        if DMX_AVAILABLE:
+            self.dmx_button = QPushButton("DMX: Kapalı")
+            self.dmx_button.clicked.connect(self.toggle_dmx)
+            self.dmx_button.setStyleSheet("padding: 10px; font-size: 14px; background-color: #ffcccc;")
+            buttons.addWidget(self.dmx_button)
+        
         for b in (self.start_button, self.stop_button, self.refresh_button):
             b.setStyleSheet("padding: 10px; font-size: 14px;")
             buttons.addWidget(b)
@@ -1144,6 +1165,15 @@ class VUMeterApp(QMainWindow):
                     self.big_lights_window.update_lights(states)
             except Exception:
                 pass
+            
+            # DMX güncelleme
+            if self.dmx_enabled and self.dmx and self.dmx.is_connected():
+                try:
+                    # VU verilerini DMX'e gönder
+                    bands_list = list(self._last_bands) if self._last_bands else [0.0]*6
+                    self.dmx.update_from_vu(self._last_left, self._last_right, bands_list)
+                except Exception as e:
+                    logger.exception(f"DMX güncelleme hatası: {e}")
         except Exception:
             pass
 
@@ -1284,6 +1314,46 @@ class VUMeterApp(QMainWindow):
                 self._ensure_serial()
         except Exception:
             pass
+    
+    def _init_dmx(self):
+        """DMX kontrolcüyü başlat"""
+        try:
+            self.dmx = DMXController(mode='auto')
+            logger.info("DMX kontrolcü oluşturuldu")
+        except Exception as e:
+            logger.exception(f"DMX başlatma hatası: {e}")
+            self.dmx = None
+    
+    def toggle_dmx(self):
+        """DMX'i aç/kapat"""
+        if not DMX_AVAILABLE or not self.dmx:
+            return
+            
+        try:
+            if self.dmx_enabled:
+                # DMX'i kapat
+                self.dmx.blackout()
+                self.dmx.disconnect()
+                self.dmx_enabled = False
+                self.dmx_button.setText("DMX: Kapalı")
+                self.dmx_button.setStyleSheet("padding: 10px; font-size: 14px; background-color: #ffcccc;")
+                logger.info("DMX kapatıldı")
+            else:
+                # DMX'i aç
+                if self.dmx.connect():
+                    self.dmx.start_thread(fps=40.0)
+                    self.dmx_enabled = True
+                    self.dmx_button.setText(f"DMX: Açık ({self.dmx.mode})")
+                    self.dmx_button.setStyleSheet("padding: 10px; font-size: 14px; background-color: #ccffcc;")
+                    logger.info(f"DMX açıldı (mode: {self.dmx.mode})")
+                else:
+                    self.dmx_button.setText("DMX: Hata!")
+                    self.dmx_button.setStyleSheet("padding: 10px; font-size: 14px; background-color: #ffaaaa;")
+                    logger.error("DMX bağlantısı başarısız")
+        except Exception as e:
+            logger.exception(f"DMX toggle hatası: {e}")
+            self.dmx_button.setText("DMX: Hata!")
+            self.dmx_button.setStyleSheet("padding: 10px; font-size: 14px; background-color: #ffaaaa;")
 
     def _ensure_serial(self):
         try:
@@ -1361,6 +1431,13 @@ class VUMeterApp(QMainWindow):
             self.audio_monitor.stop()
         except Exception:
             pass
+        # DMX'i temizle
+        if self.dmx_enabled and self.dmx:
+            try:
+                self.dmx.blackout()
+                self.dmx.disconnect()
+            except:
+                pass
         event.accept()
 
 

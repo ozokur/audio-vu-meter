@@ -16,3 +16,7 @@ matplotlib>=3.3.0
 # Seri haberleşme (COM port)
 pyserial>=3.5
 
+# DMX kontrol kütüphaneleri
+pyusb>=1.2.1
+libusb>=1.0.26
+
