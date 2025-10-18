@@ -21,7 +21,15 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import QTimer, pyqtSignal, QObject
 
-__version__ = "1.5.0"
+# DMX USB kontrolü için
+try:
+    import usb.core
+    import usb.util
+    DMX_AVAILABLE = True
+except ImportError:
+    DMX_AVAILABLE = False
+
+__version__ = "1.6.6"
 
 
 # Logging
@@ -195,6 +203,192 @@ class AudioMonitor(QObject):
                 pass
         pa.terminate()
         return devices
+
+
+# UDMX Device IDs
+UDMX_DEVICES = [
+    {'vendor': 0x16C0, 'product': 0x05DC, 'name': 'Anyma uDMX'},
+    {'vendor': 0x03EB, 'product': 0x8888, 'name': 'DMXControl uDMX'},
+]
+
+
+class DMXController:
+    """DMX UDMX Controller for Audio-reactive lighting"""
+    def __init__(self, logger_instance=None):
+        self.dmx_data = [0] * 512
+        self.usb_device = None
+        self.running = False
+        self.logger = logger_instance or logger
+        self.enabled = False
+        
+        # Color mapping for audio bands (Channel 3 values)
+        # 0-9: White, 10+: Colors (Red, Yellow, Green, Cyan, Blue, Magenta, etc.)
+        self.color_map = {
+            'white': 5,      # 0-9 range
+            'red': 15,       # Kırmızı
+            'orange': 25,    # Turuncu
+            'yellow': 35,    # Sarı
+            'green': 50,     # Yeşil
+            'cyan': 70,      # Camgöbeği
+            'blue': 90,      # Mavi
+            'purple': 110,   # Mor
+            'magenta': 120,  # Magenta
+        }
+        
+        if DMX_AVAILABLE:
+            self.logger.info("DMX Controller initialized (USB support available)")
+        else:
+            self.logger.warning("DMX Controller initialized (pyusb not available - DMX disabled)")
+    
+    def find_udmx_devices(self):
+        """Find connected UDMX devices"""
+        if not DMX_AVAILABLE:
+            return []
+        
+        devices = []
+        try:
+            for device_info in UDMX_DEVICES:
+                dev = usb.core.find(idVendor=device_info['vendor'], idProduct=device_info['product'])
+                if dev is not None:
+                    devices.append({
+                        'device': dev,
+                        'name': device_info['name'],
+                        'vendor': device_info['vendor'],
+                        'product': device_info['product'],
+                    })
+                    self.logger.info(f"Found UDMX device: {device_info['name']}")
+        except Exception as e:
+            self.logger.error(f"Error finding UDMX devices: {e}")
+        return devices
+    
+    def connect(self, device_index=0):
+        """Connect to UDMX device"""
+        if not DMX_AVAILABLE:
+            self.logger.warning("Cannot connect: pyusb not available")
+            return False
+        
+        try:
+            devices = self.find_udmx_devices()
+            if not devices:
+                self.logger.warning("No UDMX devices found")
+                return False
+            
+            if device_index >= len(devices):
+                device_index = 0
+            
+            device_info = devices[device_index]
+            self.usb_device = device_info['device']
+            
+            try:
+                if self.usb_device.is_kernel_driver_active(0):
+                    self.usb_device.detach_kernel_driver(0)
+            except:
+                pass
+            
+            try:
+                self.usb_device.set_configuration()
+            except:
+                pass
+            
+            self.running = True
+            self.enabled = True
+            self.logger.info(f"Connected to {device_info['name']}")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"DMX connection error: {e}")
+            return False
+    
+    def disconnect(self):
+        """Disconnect from UDMX device"""
+        self.running = False
+        self.enabled = False
+        if self.usb_device:
+            try:
+                usb.util.dispose_resources(self.usb_device)
+                self.logger.info("DMX device disconnected")
+            except:
+                pass
+            self.usb_device = None
+    
+    def set_channel(self, channel, value):
+        """Set DMX channel value (1-512, 0-255)"""
+        if 1 <= channel <= 512 and 0 <= value <= 255:
+            self.dmx_data[channel - 1] = int(value)
+    
+    def send_frame(self):
+        """Send DMX frame to UDMX device"""
+        if not self.enabled or not self.usb_device:
+            return
+        
+        try:
+            # Send first 9 channels (enough for our use)
+            for i in range(9):
+                self.usb_device.ctrl_transfer(0x40, 0x01, self.dmx_data[i], i, [])
+        except Exception as e:
+            # Silently fail to avoid log spam
+            pass
+    
+    def set_audio_reactive(self, llow, lmid, lhigh, rlow, rmid, rhigh, light_states=None, beat_flash=False, range_config=None):
+        """Set DMX values based on audio band levels - Llow mode with beat flash and range scaling"""
+        if not self.enabled:
+            return
+        
+        # 🎵 Llow seviyesini hesapla (L ve R kanallarının ortalaması)
+        llow_level = (llow + rlow) / 2.0
+        
+        # 🎚️ RANGE SCALING: Range light min/max dB'ye göre scale et
+        if range_config and 'min_db' in range_config and 'max_db' in range_config:
+            min_db = float(range_config['min_db'])
+            max_db = float(range_config['max_db'])
+            
+            # Llow'u dB'ye çevir
+            if llow_level > 1e-12:
+                llow_db = 20.0 * np.log10(llow_level)
+            else:
+                llow_db = -120.0
+            
+            # Min/Max dB aralığına göre 0-1 arası scale et
+            if llow_db <= min_db:
+                scaled_level = 0.0
+            elif llow_db >= max_db:
+                scaled_level = 1.0
+            else:
+                scaled_level = (llow_db - min_db) / (max_db - min_db)
+            
+            # Scaled level'i kullan
+            llow_level = max(0.0, min(1.0, scaled_level))
+        
+        # Base parlaklık: Scaled Llow seviyesine göre (0-255)
+        base_brightness = int(llow_level * 255)
+        base_brightness = max(0, min(255, base_brightness))
+        
+        # 🔥 BEAT FLASH: Beat anında maksimum parlaklık!
+        if beat_flash:
+            brightness = 255  # Full brightness on beat!
+        else:
+            brightness = base_brightness
+        
+        # Minimum eşik: Çok düşük seslerde kapansın
+        if base_brightness < 10 and not beat_flash:
+            self.set_channel(5, 0)      # Dimmer off
+            self.set_channel(3, self.color_map['white'])
+            self.set_channel(6, 0)      # Master off
+            self.send_frame()
+            return
+        
+        # Channel 5: Dimmer (Parlaklık - beat'te maksimum!)
+        self.set_channel(5, brightness)
+        
+        # Channel 3: Renk - MANUEL KONTROL (GUI'den ayarlanır)
+        # Bu kanal artık otomatik değişmez, sadece GUI'den set edilir
+        
+        # Channel 6: Master Dimmer - AYNI MAPPING (Llow + Range Scaling)
+        # Ch5 ile aynı mantık ama ayrı kanal
+        self.set_channel(6, brightness)
+        
+        # Send the frame
+        self.send_frame()
 
 
 class VUMeterWidget(QWidget):
@@ -854,6 +1048,10 @@ class VUMeterApp(QMainWindow):
         self.audio_monitor = AudioMonitor()
         self._last_left = 0.0
         self._last_right = 0.0
+        
+        # DMX Controller entegrasyonu
+        self.dmx_controller = DMXController(logger_instance=logger)
+        
         self._init_ui()
 
         self.audio_monitor.level_updated.connect(self.on_level_updated)
@@ -971,6 +1169,124 @@ class VUMeterApp(QMainWindow):
 
         device_layout.addStretch()
         layout.addLayout(device_layout)
+        
+        # DMX Kontrol Paneli
+        dmx_frame = QHBoxLayout()
+        dmx_label = QLabel("🎭 DMX Kontrol:")
+        dmx_label.setStyleSheet("font-weight:bold; color:#FF6B35;")
+        dmx_frame.addWidget(dmx_label)
+        
+        self.dmx_device_combo = QComboBox()
+        self.dmx_device_combo.setMinimumWidth(200)
+        dmx_frame.addWidget(self.dmx_device_combo)
+        
+        self.dmx_refresh_btn = QPushButton("Yenile")
+        self.dmx_refresh_btn.clicked.connect(self.refresh_dmx_devices)
+        dmx_frame.addWidget(self.dmx_refresh_btn)
+        
+        self.dmx_connect_btn = QPushButton("DMX Bağlan")
+        self.dmx_connect_btn.clicked.connect(self.toggle_dmx_connection)
+        self.dmx_connect_btn.setStyleSheet("background-color:#4CAF50; color:white; padding:5px;")
+        dmx_frame.addWidget(self.dmx_connect_btn)
+        
+        self.dmx_status_label = QLabel("DMX: Kapalı")
+        self.dmx_status_label.setStyleSheet("color:red; font-weight:bold;")
+        dmx_frame.addWidget(self.dmx_status_label)
+        
+        dmx_frame.addStretch()
+        layout.addLayout(dmx_frame)
+        
+        # DMX bilgi satırı
+        dmx_info = QLabel("🎨 DMX: Ch3=MANUEL Renk | Ch5+Ch6=Llow Range Scaled (Min/Max dB) + Beat Flash | Ch1+Ch2=Manuel Pan/Tilt")
+        dmx_info.setStyleSheet("font-size:9px; color:#673AB7; font-weight:bold; padding:3px; background-color:#EDE7F6; border-radius:3px;")
+        layout.addWidget(dmx_info)
+        
+        # DMX Manuel Kontroller (Ch1 Pan, Ch2 Tilt)
+        dmx_manual_frame = QHBoxLayout()
+        
+        # Channel 1: Pan (Horizontal)
+        ch1_label = QLabel("Ch1 Pan:")
+        ch1_label.setFixedWidth(60)
+        dmx_manual_frame.addWidget(ch1_label)
+        
+        self.dmx_ch1_slider = QSpinBox()
+        self.dmx_ch1_slider.setRange(0, 255)
+        self.dmx_ch1_slider.setValue(127)
+        self.dmx_ch1_slider.setToolTip("Channel 1: Horizontal Rotation (0-255)")
+        self.dmx_ch1_slider.valueChanged.connect(self.on_dmx_manual_changed)
+        dmx_manual_frame.addWidget(self.dmx_ch1_slider)
+        
+        # Channel 2: Tilt (Vertical)
+        ch2_label = QLabel("Ch2 Tilt:")
+        ch2_label.setFixedWidth(60)
+        dmx_manual_frame.addWidget(ch2_label)
+        
+        self.dmx_ch2_slider = QSpinBox()
+        self.dmx_ch2_slider.setRange(0, 255)
+        self.dmx_ch2_slider.setValue(127)
+        self.dmx_ch2_slider.setToolTip("Channel 2: Vertical Rotation (0-255)")
+        self.dmx_ch2_slider.valueChanged.connect(self.on_dmx_manual_changed)
+        dmx_manual_frame.addWidget(self.dmx_ch2_slider)
+        
+        # Reset butonu
+        dmx_reset_btn = QPushButton("Merkez (127)")
+        dmx_reset_btn.setToolTip("Pan ve Tilt'i merkeze (127, 127) getir")
+        dmx_reset_btn.clicked.connect(self.dmx_reset_position)
+        dmx_manual_frame.addWidget(dmx_reset_btn)
+        
+        dmx_manual_frame.addStretch()
+        layout.addLayout(dmx_manual_frame)
+        
+        # DMX Renk Kontrolü (Channel 3)
+        dmx_color_frame = QHBoxLayout()
+        
+        ch3_label = QLabel("Ch3 Renk:")
+        ch3_label.setFixedWidth(70)
+        dmx_color_frame.addWidget(ch3_label)
+        
+        self.dmx_ch3_slider = QSpinBox()
+        self.dmx_ch3_slider.setRange(0, 255)
+        self.dmx_ch3_slider.setValue(5)  # Default: White
+        self.dmx_ch3_slider.setToolTip("Channel 3: Color (0-9=Beyaz, 10+=Renkler)")
+        self.dmx_ch3_slider.valueChanged.connect(self.on_dmx_manual_changed)
+        dmx_color_frame.addWidget(self.dmx_ch3_slider)
+        
+        # Renk preset butonları
+        preset_white = QPushButton("⚪ Beyaz (5)")
+        preset_white.setToolTip("Beyaz renk")
+        preset_white.clicked.connect(lambda: self.dmx_ch3_slider.setValue(5))
+        dmx_color_frame.addWidget(preset_white)
+        
+        preset_red = QPushButton("🔴 Kırmızı (15)")
+        preset_red.setToolTip("Kırmızı renk")
+        preset_red.clicked.connect(lambda: self.dmx_ch3_slider.setValue(15))
+        dmx_color_frame.addWidget(preset_red)
+        
+        preset_orange = QPushButton("🟠 Turuncu (25)")
+        preset_orange.setToolTip("Turuncu renk")
+        preset_orange.clicked.connect(lambda: self.dmx_ch3_slider.setValue(25))
+        dmx_color_frame.addWidget(preset_orange)
+        
+        preset_yellow = QPushButton("🟡 Sarı (35)")
+        preset_yellow.setToolTip("Sarı renk")
+        preset_yellow.clicked.connect(lambda: self.dmx_ch3_slider.setValue(35))
+        dmx_color_frame.addWidget(preset_yellow)
+        
+        preset_green = QPushButton("🟢 Yeşil (50)")
+        preset_green.setToolTip("Yeşil renk")
+        preset_green.clicked.connect(lambda: self.dmx_ch3_slider.setValue(50))
+        dmx_color_frame.addWidget(preset_green)
+        
+        preset_blue = QPushButton("🔵 Mavi (90)")
+        preset_blue.setToolTip("Mavi renk")
+        preset_blue.clicked.connect(lambda: self.dmx_ch3_slider.setValue(90))
+        dmx_color_frame.addWidget(preset_blue)
+        
+        dmx_color_frame.addStretch()
+        layout.addLayout(dmx_color_frame)
+        
+        # DMX cihazlarını listele
+        self.refresh_dmx_devices()
 
         # Inline LED bit panel (8 bytes) with labels
         inline_box = QVBoxLayout()
@@ -1094,6 +1410,51 @@ class VUMeterApp(QMainWindow):
     def _on_gui_tick(self):
         self.vu_widget.update_levels(self._last_left, self._last_right)
         self.vu_widget.update_bands(self._last_bands)
+        
+        # DMX güncelleme - BASIT MOD: Llow seviyesi + Beat Flash
+        if hasattr(self, 'dmx_controller') and self.dmx_controller.enabled:
+            try:
+                b = list(self._last_bands) if isinstance(self._last_bands, (list, tuple)) else [0]*6
+                while len(b) < 6:
+                    b.append(0.0)
+                llow, lmid, lhigh, rlow, rmid, rhigh = b[:6]
+                
+                # Beat flash kontrolü: Llow tempo state'inden beat tespiti
+                beat_flash = False
+                try:
+                    now = time.monotonic()
+                    tempo = getattr(self.vu_widget, '_tempo', {})
+                    llow_state = tempo.get('Llow')
+                    if llow_state:
+                        # Beat tespit edildi mi? (on_until aktif ve çok kısa süre geçti)
+                        on_until = float(llow_state.get('on_until', 0.0))
+                        last_flash = float(llow_state.get('last_flash', 0.0))
+                        
+                        # Beat'ten sonraki ilk 50ms'de flash aktif
+                        if now < on_until and (now - last_flash) < 0.05:
+                            beat_flash = True
+                except Exception:
+                    pass
+                
+                # Range config'i al (Llow için)
+                range_config = None
+                try:
+                    if hasattr(self.vu_widget, '_range_cfg'):
+                        llow_cfg = self.vu_widget._range_cfg.get('Llow', {})
+                        if llow_cfg:
+                            range_config = {
+                                'min_db': float(llow_cfg.get('min_db', -60.0)),
+                                'max_db': float(llow_cfg.get('max_db', 0.0))
+                            }
+                except Exception:
+                    pass
+                
+                # DMX gönder (beat_flash ve range_config ile)
+                self.dmx_controller.set_audio_reactive(
+                    llow, lmid, lhigh, rlow, rmid, rhigh, None, beat_flash, range_config
+                )
+            except Exception as e:
+                pass  # Sessizce devam et
         # Build 8 bytes for LED output and display
         try:
             frame = self._build_led_bytes()
@@ -1350,6 +1711,86 @@ class VUMeterApp(QMainWindow):
 
     def on_error(self, error_msg):
         pass
+    
+    def refresh_dmx_devices(self):
+        """DMX cihazlarını yenile"""
+        try:
+            if not DMX_AVAILABLE:
+                self.dmx_device_combo.clear()
+                self.dmx_device_combo.addItem("pyusb yüklü değil")
+                return
+            
+            devices = self.dmx_controller.find_udmx_devices()
+            self.dmx_device_combo.clear()
+            
+            if devices:
+                for dev in devices:
+                    self.dmx_device_combo.addItem(f"{dev['name']} (VID:{dev['vendor']:04X} PID:{dev['product']:04X})")
+                logger.info(f"{len(devices)} DMX cihazı bulundu")
+            else:
+                self.dmx_device_combo.addItem("UDMX cihazı bulunamadı")
+                logger.warning("DMX cihazı bulunamadı")
+        except Exception as e:
+            logger.error(f"DMX cihaz listesi hatası: {e}")
+            self.dmx_device_combo.clear()
+            self.dmx_device_combo.addItem("Hata: Cihaz bulunamadı")
+    
+    def toggle_dmx_connection(self):
+        """DMX bağlantısını aç/kapat"""
+        try:
+            if not self.dmx_controller.enabled:
+                # Bağlan
+                device_index = self.dmx_device_combo.currentIndex()
+                if device_index < 0:
+                    return
+                
+                if self.dmx_controller.connect(device_index):
+                    self.dmx_connect_btn.setText("DMX Kes")
+                    self.dmx_connect_btn.setStyleSheet("background-color:#f44336; color:white; padding:5px;")
+                    self.dmx_status_label.setText("DMX: Aktif ✓")
+                    self.dmx_status_label.setStyleSheet("color:#4CAF50; font-weight:bold;")
+                    logger.info("DMX bağlantısı kuruldu")
+                    # İlk bağlantıda manuel değerleri gönder
+                    self.on_dmx_manual_changed()
+                else:
+                    self.dmx_status_label.setText("DMX: Bağlantı Hatası")
+                    self.dmx_status_label.setStyleSheet("color:orange; font-weight:bold;")
+                    logger.error("DMX bağlantısı kurulamadı")
+            else:
+                # Kes
+                self.dmx_controller.disconnect()
+                self.dmx_connect_btn.setText("DMX Bağlan")
+                self.dmx_connect_btn.setStyleSheet("background-color:#4CAF50; color:white; padding:5px;")
+                self.dmx_status_label.setText("DMX: Kapalı")
+                self.dmx_status_label.setStyleSheet("color:red; font-weight:bold;")
+                logger.info("DMX bağlantısı kesildi")
+        except Exception as e:
+            logger.error(f"DMX bağlantı hatası: {e}")
+    
+    def on_dmx_manual_changed(self):
+        """DMX manuel kontrol değiştiğinde (Ch1 Pan, Ch2 Tilt, Ch3 Renk)"""
+        try:
+            if hasattr(self, 'dmx_controller') and self.dmx_controller.enabled:
+                ch1_value = int(self.dmx_ch1_slider.value())
+                ch2_value = int(self.dmx_ch2_slider.value())
+                ch3_value = int(self.dmx_ch3_slider.value()) if hasattr(self, 'dmx_ch3_slider') else 5
+                
+                self.dmx_controller.set_channel(1, ch1_value)
+                self.dmx_controller.set_channel(2, ch2_value)
+                self.dmx_controller.set_channel(3, ch3_value)
+                self.dmx_controller.send_frame()
+                logger.debug(f"DMX Manuel: Ch1={ch1_value}, Ch2={ch2_value}, Ch3={ch3_value}")
+        except Exception as e:
+            logger.error(f"DMX manuel kontrol hatası: {e}")
+    
+    def dmx_reset_position(self):
+        """DMX Pan/Tilt pozisyonunu merkeze getir"""
+        try:
+            self.dmx_ch1_slider.setValue(127)
+            self.dmx_ch2_slider.setValue(127)
+            logger.info("DMX pozisyonu merkeze getirildi (127, 127)")
+        except Exception as e:
+            logger.error(f"DMX reset hatası: {e}")
 
     def closeEvent(self, event):
         try:
@@ -1359,6 +1800,11 @@ class VUMeterApp(QMainWindow):
             pass
         try:
             self.audio_monitor.stop()
+        except Exception:
+            pass
+        try:
+            if hasattr(self, 'dmx_controller'):
+                self.dmx_controller.disconnect()
         except Exception:
             pass
         event.accept()
