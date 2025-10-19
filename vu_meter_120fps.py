@@ -29,7 +29,7 @@ try:
 except ImportError:
     DMX_AVAILABLE = False
 
-__version__ = "1.6.6"
+__version__ = "1.6.10"
 
 
 # Logging
@@ -370,22 +370,19 @@ class DMXController:
             brightness = base_brightness
         
         # Minimum eşik: Çok düşük seslerde kapansın
-        if base_brightness < 10 and not beat_flash:
-            self.set_channel(5, 0)      # Dimmer off
-            self.set_channel(3, self.color_map['white'])
-            self.set_channel(6, 0)      # Master off
+        if base_brightness < 10:
+            self.set_channel(6, 0)      # Dimmer off
             self.send_frame()
             return
         
-        # Channel 5: Dimmer (Parlaklık - beat'te maksimum!)
-        self.set_channel(5, brightness)
+        # Channel 6: Dimmer - Sadece Range Scaling (Beat Flash YOK!)
+        self.set_channel(6, base_brightness)  # base_brightness kullan (beat_flash yok)
         
         # Channel 3: Renk - MANUEL KONTROL (GUI'den ayarlanır)
         # Bu kanal artık otomatik değişmez, sadece GUI'den set edilir
         
-        # Channel 6: Master Dimmer - AYNI MAPPING (Llow + Range Scaling)
-        # Ch5 ile aynı mantık ama ayrı kanal
-        self.set_channel(6, brightness)
+        # Channel 5: Master Dimmer - MANUEL KONTROL (GUI'den ayarlanır)
+        # Bu kanal artık otomatik değişmez, sadece GUI'den set edilir
         
         # Send the frame
         self.send_frame()
@@ -1197,7 +1194,7 @@ class VUMeterApp(QMainWindow):
         layout.addLayout(dmx_frame)
         
         # DMX bilgi satırı
-        dmx_info = QLabel("🎨 DMX: Ch3=MANUEL Renk | Ch5+Ch6=Llow Range Scaled (Min/Max dB) + Beat Flash | Ch1+Ch2=Manuel Pan/Tilt")
+        dmx_info = QLabel("🎨 DMX: Ch1/2=Pan/Tilt | Ch3=Renk | Ch5=Master (MANUEL) | Ch6=Range Scaling (AUTO)")
         dmx_info.setStyleSheet("font-size:9px; color:#673AB7; font-weight:bold; padding:3px; background-color:#EDE7F6; border-radius:3px;")
         layout.addWidget(dmx_info)
         
@@ -1284,6 +1281,44 @@ class VUMeterApp(QMainWindow):
         
         dmx_color_frame.addStretch()
         layout.addLayout(dmx_color_frame)
+        
+        # DMX Manuel Kontroller - Ch5 Master Dimmer
+        dmx_ch5_frame = QHBoxLayout()
+        
+        ch5_label = QLabel("Ch5 Master:")
+        ch5_label.setFixedWidth(85)
+        dmx_ch5_frame.addWidget(ch5_label)
+        
+        self.dmx_ch5_slider = QSpinBox()
+        self.dmx_ch5_slider.setRange(0, 255)
+        self.dmx_ch5_slider.setValue(0)
+        self.dmx_ch5_slider.setToolTip("Channel 5: Master Dimmer (0-255)")
+        self.dmx_ch5_slider.valueChanged.connect(self.on_dmx_manual_changed)
+        dmx_ch5_frame.addWidget(self.dmx_ch5_slider)
+        
+        dmx_ch5_frame.addStretch()
+        layout.addLayout(dmx_ch5_frame)
+        
+        # DMX Otomatik Kanal (Ch6 - READ ONLY)
+        dmx_auto_frame = QHBoxLayout()
+        
+        ch6_label = QLabel("Ch6 Dimmer:")
+        ch6_label.setFixedWidth(85)
+        ch6_label.setStyleSheet("color:#666;")
+        dmx_auto_frame.addWidget(ch6_label)
+        
+        self.dmx_ch6_value = QLabel("0")
+        self.dmx_ch6_value.setFixedWidth(50)
+        self.dmx_ch6_value.setStyleSheet("background:#f0f0f0; padding:3px; border:1px solid #ccc; font-weight:bold; color:#333;")
+        self.dmx_ch6_value.setToolTip("Channel 6: Otomatik Dimmer (Llow Range Scaling - Beat Flash YOK)")
+        dmx_auto_frame.addWidget(self.dmx_ch6_value)
+        
+        dmx_auto_info = QLabel("(Otomatik - Sadece Range Scaling)")
+        dmx_auto_info.setStyleSheet("color:#999; font-size:9px; font-style:italic;")
+        dmx_auto_frame.addWidget(dmx_auto_info)
+        
+        dmx_auto_frame.addStretch()
+        layout.addLayout(dmx_auto_frame)
         
         # DMX cihazlarını listele
         self.refresh_dmx_devices()
@@ -1449,12 +1484,39 @@ class VUMeterApp(QMainWindow):
                 except Exception:
                     pass
                 
-                # DMX gönder (beat_flash ve range_config ile)
+                # DMX gönder - Sadece Range Scaling (beat_flash=False)
                 self.dmx_controller.set_audio_reactive(
-                    llow, lmid, lhigh, rlow, rmid, rhigh, None, beat_flash, range_config
+                    llow, lmid, lhigh, rlow, rmid, rhigh, None, False, range_config
                 )
+                
+                # Channel 6 değerini GUI'de göster (sadece Ch6 otomatik - Range Scaling)
+                try:
+                    if hasattr(self, 'dmx_ch6_value'):
+                        ch6_val = int(self.dmx_controller.dmx_data[5]) & 0xFF  # Ch6 = index 5
+                        self.dmx_ch6_value.setText(str(ch6_val))
+                        
+                        # Değere göre renk değiştir (0=gri, 1-254=yeşil tonu, 255=parlak yeşil)
+                        if ch6_val == 0:
+                            ch6_color = "#e0e0e0"
+                        elif ch6_val == 255:
+                            ch6_color = "#4CAF50"
+                        else:
+                            ch6_color = "#90EE90"
+                        
+                        self.dmx_ch6_value.setStyleSheet(f"background:{ch6_color}; padding:3px; border:1px solid #ccc; font-weight:bold; color:#333;")
+                except Exception:
+                    pass
             except Exception as e:
                 pass  # Sessizce devam et
+        else:
+            # DMX kapalıysa Ch6 değerini sıfırla
+            try:
+                if hasattr(self, 'dmx_ch6_value'):
+                    self.dmx_ch6_value.setText("0")
+                    self.dmx_ch6_value.setStyleSheet("background:#e0e0e0; padding:3px; border:1px solid #ccc; font-weight:bold; color:#999;")
+            except Exception:
+                pass
+        
         # Build 8 bytes for LED output and display
         try:
             frame = self._build_led_bytes()
@@ -1768,18 +1830,20 @@ class VUMeterApp(QMainWindow):
             logger.error(f"DMX bağlantı hatası: {e}")
     
     def on_dmx_manual_changed(self):
-        """DMX manuel kontrol değiştiğinde (Ch1 Pan, Ch2 Tilt, Ch3 Renk)"""
+        """DMX manuel kontrol değiştiğinde (Ch1 Pan, Ch2 Tilt, Ch3 Renk, Ch5 Master)"""
         try:
             if hasattr(self, 'dmx_controller') and self.dmx_controller.enabled:
                 ch1_value = int(self.dmx_ch1_slider.value())
                 ch2_value = int(self.dmx_ch2_slider.value())
                 ch3_value = int(self.dmx_ch3_slider.value()) if hasattr(self, 'dmx_ch3_slider') else 5
+                ch5_value = int(self.dmx_ch5_slider.value()) if hasattr(self, 'dmx_ch5_slider') else 0
                 
                 self.dmx_controller.set_channel(1, ch1_value)
                 self.dmx_controller.set_channel(2, ch2_value)
                 self.dmx_controller.set_channel(3, ch3_value)
+                self.dmx_controller.set_channel(5, ch5_value)
                 self.dmx_controller.send_frame()
-                logger.debug(f"DMX Manuel: Ch1={ch1_value}, Ch2={ch2_value}, Ch3={ch3_value}")
+                logger.debug(f"DMX Manuel: Ch1={ch1_value}, Ch2={ch2_value}, Ch3={ch3_value}, Ch5={ch5_value}")
         except Exception as e:
             logger.error(f"DMX manuel kontrol hatası: {e}")
     

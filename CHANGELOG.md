@@ -3,6 +3,88 @@
 All notable changes to this project will be documented in this file.
 This project uses Semantic Versioning (MAJOR.MINOR.PATCH) and a Keep a Changelog‑style format.
 
+## [1.6.10] - 2025-10-19
+### Changed
+- **Ch6 Range Scaling Geri Eklendi**: Sadece Range Scaling, Beat Flash YOK!
+  - ✅ Ch6 → Llow Range Scaling (Min/Max dB ayarlarına göre)
+  - ❌ Beat Flash efekti YOK (kaldırıldı)
+  - ✅ Düzgün, smooth parlaklık değişimi
+  - ✅ `set_audio_reactive()` tekrar aktif (beat_flash=False)
+  - ✅ GUI'de Ch6 otomatik gösterim geri eklendi
+
+### Kanal Özeti (v1.6.10)
+```
+Ch1: Pan      → MANUEL (SpinBox) 🎮
+Ch2: Tilt     → MANUEL (SpinBox) 🎮
+Ch3: Renk     → MANUEL (SpinBox + Presets) 🎨
+Ch5: Master   → MANUEL (SpinBox) 🎛️
+Ch6: Dimmer   → AUTO (Range Scaling ONLY) 📊
+```
+
+### Benefits
+- 🎚️ Sadece Range Scaling - smooth ve doğal
+- ❌ Beat flash yok - ani sıçramalar yok
+- 🎵 Müziğe yumuşak tepki
+- 🎯 Kontrollü otomatik parlaklık
+
+## [1.6.9] - 2025-10-19
+### Removed
+- **Ch6 Otomatik Kontrol Kaldırıldı**: Ch6'daki tüm otomatik özellikler kaldırıldı (geçici)
+
+## [1.6.8] - 2025-10-19
+### Changed
+- **Kanal swap: Ch5 ↔ Ch6**: Kullanıcı talebiyle kanal rolleri değiştirildi
+  - **Ch5**: Artık MANUEL (Master Dimmer kontrolü, SpinBox ile 0-255)
+  - **Ch6**: Artık OTOMATİK (Llow + Range scaling + Beat flash)
+  - Eski Ch5 işlevleri → Ch6'ya taşındı
+  - Eski Ch6 işlevleri → Ch5'e taşındı
+
+### Kanal Özeti (v1.6.8)
+```
+Ch1: Pan      → MANUEL (SpinBox)
+Ch2: Tilt     → MANUEL (SpinBox)
+Ch3: Renk     → MANUEL (SpinBox + Preset butonlar)
+Ch5: Master   → MANUEL (SpinBox) ✨ DEĞİŞTİ (eski Ch6)
+Ch6: Dimmer   → OTOMATİK (Llow + Range + Beat) ✨ DEĞİŞTİ (eski Ch5)
+```
+
+### Technical Details
+- `set_audio_reactive()`: Ch5 → Ch6 mapping değiştirildi
+- GUI: Ch5 SpinBox, Ch6 read-only display
+- `on_dmx_manual_changed()`: Ch6 → Ch5 kontrolü eklendi
+- `_on_gui_tick()`: Ch5 → Ch6 otomatik gösterim
+- DMX bilgi satırı güncellendi
+
+### Benefits
+- 🎛️ Ch5 manuel kontrol altında
+- ⚡ Ch6 müziğe otomatik tepki veriyor
+- 🎯 Kullanıcı tercihine göre özelleştirilebilir
+
+## [1.6.7] - 2025-10-19
+### Changed
+- **Channel 6 (Master) artık MANUEL**: Otomatik kontrolden çıkarıldı
+  - SpinBox ile manuel kontrol (0-255 arası)
+  - Artık Llow seviyesine göre otomatik değişmiyor
+  - Kullanıcı tam kontrol sahibi
+  - `set_audio_reactive()` fonksiyonundan Ch6 set işlemi kaldırıldı
+  - GUI'de Ch6 read-only display yerine manuel SpinBox eklendi
+  - `on_dmx_manual_changed()` fonksiyonuna Ch6 kontrolü eklendi
+
+### Kanal Özeti (v1.6.7)
+```
+Ch1: Pan      → MANUEL (SpinBox)
+Ch2: Tilt     → MANUEL (SpinBox)
+Ch3: Renk     → MANUEL (SpinBox + Preset butonlar)
+Ch5: Dimmer   → OTOMATİK (Llow + Range scaling + Beat flash)
+Ch6: Master   → MANUEL (SpinBox) ✨ DEĞİŞTİ
+```
+
+### Benefits
+- 🎛️ Ch6 üzerinde tam kontrol
+- 🎚️ Manuel master dimmer ayarı
+- 🎯 Daha esnek setup
+- ⚡ Ch5 hala otomatik, Ch6 sabit kalabilir
+
 ## [1.6.6] - 2025-10-18
 ### Changed
 - **Channel 3 (Renk) artık MANUEL**: GUI'den SpinBox ve renk preset butonları ile kontrol

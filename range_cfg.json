@@ -1,0 +1,41 @@
+{
+  "range_enable": true,
+  "range_cfg": {
+    "Llow": {
+      "min_db": -28.0,
+      "max_db": 0.0,
+      "one_shot": false,
+      "shot_ms": 120
+    },
+    "Lmid": {
+      "min_db": -25.0,
+      "max_db": 0.0,
+      "one_shot": false,
+      "shot_ms": 120
+    },
+    "Lhigh": {
+      "min_db": -25.0,
+      "max_db": 0.0,
+      "one_shot": false,
+      "shot_ms": 1
+    },
+    "Rlow": {
+      "min_db": 0.0,
+      "max_db": 0.0,
+      "one_shot": false,
+      "shot_ms": 1
+    },
+    "Rmid": {
+      "min_db": 0.0,
+      "max_db": 0.0,
+      "one_shot": false,
+      "shot_ms": 120
+    },
+    "Rhigh": {
+      "min_db": 0.0,
+      "max_db": 0.0,
+      "one_shot": false,
+      "shot_ms": 120
+    }
+  }
+}
