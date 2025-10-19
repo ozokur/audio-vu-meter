@@ -29,7 +29,7 @@ try:
 except ImportError:
     DMX_AVAILABLE = False
 
-__version__ = "1.7.0"
+__version__ = "1.7.1"
 
 
 # Logging
@@ -55,7 +55,7 @@ class AudioMonitor(QObject):
     def __init__(self):
         super().__init__()
         self.sample_rate = 44100
-        self.chunk_size = 2048  # Daha iyi frekans çözünürlüğü için (44100/2048 = ~21.5 Hz)
+        self.chunk_size = 1024  # Balanced: 43 Hz callback rate, 43 Hz freq resolution (~2 bins in 20-100Hz)
         self.channels = 2
         self.device_index = None
         self.use_loopback = False

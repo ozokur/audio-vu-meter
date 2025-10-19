@@ -3,6 +3,21 @@
 All notable changes to this project will be documented in this file.
 This project uses Semantic Versioning (MAJOR.MINOR.PATCH) and a Keep a Changelog‑style format.
 
+## [1.7.1] - 2025-10-19
+### Changed
+- **⚡ Optimized Chunk Size for Better Responsiveness**
+  - ✅ Chunk size: 2048 → 1024 samples
+  - ✅ Audio callback rate: 21.5 Hz → 43 Hz (2x faster)
+  - ✅ Frequency resolution: ~43 Hz (still good for bass detection)
+  - ✅ ~2 FFT bins in 20-100Hz range (adequate for bass)
+  - ✅ Better balance between speed and accuracy
+
+### Benefits
+- 🚀 Faster visual response (43 updates/sec vs 21.5)
+- 🎵 Still captures low frequencies accurately
+- 🎯 Smoother DMX dimmer control
+- ⚖️ Optimal balance for real-time performance
+
 ## [1.7.0] - 2025-10-19
 ### Added
 - **🎵 Improved Low Frequency Detection (20-100Hz)**
