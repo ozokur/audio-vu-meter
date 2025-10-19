@@ -29,7 +29,7 @@ try:
 except ImportError:
     DMX_AVAILABLE = False
 
-__version__ = "1.6.10"
+__version__ = "1.7.0"
 
 
 # Logging
@@ -55,7 +55,7 @@ class AudioMonitor(QObject):
     def __init__(self):
         super().__init__()
         self.sample_rate = 44100
-        self.chunk_size = 256  # 120 Hz GUI iÃ§in daha sÄ±k callback
+        self.chunk_size = 2048  # Daha iyi frekans çözünürlüğü için (44100/2048 = ~21.5 Hz)
         self.channels = 2
         self.device_index = None
         self.use_loopback = False
@@ -144,7 +144,7 @@ class AudioMonitor(QObject):
                             out.append(_s(rms))
                         return out
 
-                    bands = [(20.0, 250.0), (250.0, 4000.0), (4000.0, 20000.0)]
+                    bands = [(20.0, 100.0), (100.0, 4000.0), (4000.0, 20000.0)]
                     sr = int(self.sample_rate)
                     l_bands = band_rms(lch, sr, bands)
                     r_bands = band_rms(rch, sr, bands)
@@ -510,7 +510,7 @@ class VUMeterWidget(QWidget):
             row = QHBoxLayout()
             light = self._make_light()
             lab = QLabel(label_text)
-            lab.setFixedWidth(60)
+            lab.setFixedWidth(140)
             bar = QProgressBar()
             bar.setMaximum(100)
             bar.setTextVisible(True)
@@ -526,12 +526,12 @@ class VUMeterWidget(QWidget):
             row.addWidget(bpm_lab)
             return row, light, bar, db_lab, bpm_lab
 
-        self.l_low_row, self.l_low_light, self.l_low_bar, self.l_low_db, self.l_low_bpm = make_band_row("L Low:")
-        self.l_mid_row, self.l_mid_light, self.l_mid_bar, self.l_mid_db, self.l_mid_bpm = make_band_row("L Mid:")
-        self.l_high_row, self.l_high_light, self.l_high_bar, self.l_high_db, self.l_high_bpm = make_band_row("L High:")
-        self.r_low_row, self.r_low_light, self.r_low_bar, self.r_low_db, self.r_low_bpm = make_band_row("R Low:")
-        self.r_mid_row, self.r_mid_light, self.r_mid_bar, self.r_mid_db, self.r_mid_bpm = make_band_row("R Mid:")
-        self.r_high_row, self.r_high_light, self.r_high_bar, self.r_high_db, self.r_high_bpm = make_band_row("R High:")
+        self.l_low_row, self.l_low_light, self.l_low_bar, self.l_low_db, self.l_low_bpm = make_band_row("L Low (20-100Hz):")
+        self.l_mid_row, self.l_mid_light, self.l_mid_bar, self.l_mid_db, self.l_mid_bpm = make_band_row("L Mid (100-4k):")
+        self.l_high_row, self.l_high_light, self.l_high_bar, self.l_high_db, self.l_high_bpm = make_band_row("L High (4k-20k):")
+        self.r_low_row, self.r_low_light, self.r_low_bar, self.r_low_db, self.r_low_bpm = make_band_row("R Low (20-100Hz):")
+        self.r_mid_row, self.r_mid_light, self.r_mid_bar, self.r_mid_db, self.r_mid_bpm = make_band_row("R Mid (100-4k):")
+        self.r_high_row, self.r_high_light, self.r_high_bar, self.r_high_db, self.r_high_bpm = make_band_row("R High (4k-20k):")
 
         for row in (self.l_low_row, self.l_mid_row, self.l_high_row,
                     self.r_low_row, self.r_mid_row, self.r_high_row):

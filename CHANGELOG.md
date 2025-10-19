@@ -3,6 +3,33 @@
 All notable changes to this project will be documented in this file.
 This project uses Semantic Versioning (MAJOR.MINOR.PATCH) and a Keep a Changelog‑style format.
 
+## [1.7.0] - 2025-10-19
+### Added
+- **🎵 Improved Low Frequency Detection (20-100Hz)**
+  - ✅ Optimized frequency bands for better bass detection
+  - ✅ Low band: 20-100 Hz (sub-bass, kick drum fundamentals)
+  - ✅ Mid band: 100-4000 Hz (vocals, instruments)
+  - ✅ High band: 4000-20000 Hz (treble)
+  
+### Changed
+- **⚡ Enhanced FFT Resolution**
+  - ✅ Chunk size: 256 → 2048 samples
+  - ✅ Frequency resolution: 172 Hz → ~21.5 Hz
+  - ✅ Better low-frequency bin coverage (~4 bins in 20-100Hz range)
+  - ✅ More accurate bass detection for DMX dimmer control
+
+### Improved
+- **📊 UI Labels**
+  - ✅ Frequency ranges now visible in band labels
+  - ✅ Label width: 60 → 140 pixels
+  - ✅ Shows "L Low (20-100Hz)", "L Mid (100-4k)", etc.
+
+### Technical Details
+- Sample rate: 44100 Hz
+- Chunk size: 2048 samples
+- FFT bins in low band: ~4 bins (20-100Hz)
+- DMX Ch6 (Dimmer) now responds to 20-100Hz bass frequencies
+
 ## [1.6.10] - 2025-10-19
 ### Changed
 - **Ch6 Range Scaling Geri Eklendi**: Sadece Range Scaling, Beat Flash YOK!
