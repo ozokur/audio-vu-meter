@@ -393,7 +393,7 @@ class VUMeterApp(QMainWindow):
 
     def init_ui(self):
         """UI oluştur"""
-        self.setWindowTitle(f"Audio VU Meter v{__version__}")
+        self.setWindowTitle(f"Audio VU Meter + DMX Bass Reaktif Işıklandırma v{__version__}")
         self.setGeometry(100, 100, 600, 250)
 
         # Ana widget
@@ -403,7 +403,7 @@ class VUMeterApp(QMainWindow):
         layout = QVBoxLayout()
 
         # Başlık
-        title = QLabel("Gerçek Zamanlı VU Meter - Mikrofon & Sistem Sesi")
+        title = QLabel("Audio VU Meter + DMX Bass Reaktif Işıklandırma")
         title.setStyleSheet("font-size: 16px; font-weight: bold; padding: 10px;")
         layout.addWidget(title)
 
