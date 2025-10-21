@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 Audio VU Meter GUI
-Ses kartÄ±ndan gerÃ§ek zamanlÄ± VU verisi okuyup gÃ¶rselleÅŸtiren uygulama
+Ses kartından gerçek zamanlı VU verisi okuyup görselleştiren uygulama
 """
 
 import sys
@@ -23,6 +23,16 @@ from PyQt5.QtCore import QTimer, pyqtSignal, QObject
 __version__ = "1.4.0"
 __author__ = "Audio VU Meter Team"
 
+# Audio Constants
+AUDIO_FORMAT = pyaudio.paInt16
+DEFAULT_SAMPLE_RATE = 44100
+DEFAULT_CHUNK_SIZE = 256
+DEFAULT_CHANNELS = 2
+EPSILON = 1e-12
+INT16_MAX = 32768.0
+GUI_UPDATE_INTERVAL_MS = 8  # ~120 FPS
+PEAK_DECAY_FACTOR = 0.95
+
 # Logging setup
 LOG_FILE = os.path.join(os.path.dirname(__file__), "audio_vu_meter.log")
 _logger = logging.getLogger("audio_vu_meter")
@@ -40,39 +50,39 @@ if not _logger.handlers:
 
 
 class AudioMonitor(QObject):
-    """Ses kartÄ±ndan veri okuma thread'i"""
+    """Ses kartından veri okuma thread'i"""
 
     # Sinyaller
-    level_updated = pyqtSignal(float, float)  # Sol, SaÄŸ kanal
+    level_updated = pyqtSignal(float, float)  # Sol, Sağ kanal
     error_occurred = pyqtSignal(str)
 
     def __init__(self):
         super().__init__()
         self.is_running = False
-        self.sample_rate = 44100
-        self.chunk_size = 256
-        self.channels = 2
+        self.sample_rate = DEFAULT_SAMPLE_RATE
+        self.chunk_size = DEFAULT_CHUNK_SIZE
+        self.channels = DEFAULT_CHANNELS
         self.device_index = None
-        self.use_loopback = False  # Sistem ses Ã§Ä±kÄ±ÅŸÄ±nÄ± dinle
+        self.use_loopback = False  # Sistem ses çıkışını dinle
 
         self.pa = None
         self.stream = None
 
-    def start(self):
-        """Ses kartÄ± okumayÄ± baÅŸlat"""
+    def start(self) -> None:
+        """Ses kartı okumayı başlat"""
         try:
             self.pa = pyaudio.PyAudio()
 
-            # VarsayÄ±lan giriÅŸ cihazÄ±nÄ± al
+            # Varsayılan giriş cihazını al
             if self.device_index is None:
                 self.device_index = self.pa.get_default_input_device_info()['index']
 
-            # SeÃ§ilen cihaz bilgisini al
+            # Seçilen cihaz bilgisini al
             device_info = self.pa.get_device_info_by_index(self.device_index)
 
             # Stream parametreleri
             stream_params = {
-                'format': pyaudio.paInt16,
+                'format': AUDIO_FORMAT,
                 'channels': self.channels,
                 'rate': int(device_info['defaultSampleRate']),
                 'input': True,
@@ -81,44 +91,43 @@ class AudioMonitor(QObject):
                 'stream_callback': self._audio_callback
             }
 
-            # Stream aÃ§
+            # Stream aç
             self.stream = self.pa.open(**stream_params)
 
             self.is_running = True
             self.stream.start_stream()
 
         except Exception as e:
-            _logger.exception("Ses kartÄ± baÅŸlatma hatasÄ±")
-            self.error_occurred.emit(f"Ses kartÄ± hatasÄ±: {e}")
+            _logger.exception("Ses kartı başlatma hatası")
+            self.error_occurred.emit(f"Ses kartı hatası: {e}")
 
     def _audio_callback(self, in_data, frame_count, time_info, status):
-        """PyAudio callback - her chunk'ta Ã§aÄŸrÄ±lÄ±r"""
+        """PyAudio callback - her chunk'ta çağrılır"""
         try:
-            # BoÅŸ veri kontrolÃ¼
+            # Boş veri kontrolü
             if in_data is None or len(in_data) == 0:
                 left_rms = 0.0
                 right_rms = 0.0
             else:
-                # Byte'larÄ± numpy array'e Ã§evir (float32'ye terfi ettir, overflow Ã¶nle)
+                # Byte'ları numpy array'e çevir (float32'ye terfi ettir, overflow önle)
                 audio_data = np.frombuffer(in_data, dtype=np.int16).astype(np.float32, copy=False)
 
                 if audio_data.size == 0:
                     left_rms = 0.0
                     right_rms = 0.0
                 else:
-                    # Stereo ayrÄ±mÄ± (eÅŸit bÃ¶lÃ¼nemiyorsa mono varsay)
+                    # Stereo ayrımı (eşit bölünemiyorsa mono varsay)
                     if self.channels == 2 and audio_data.size >= 2:
                         left = audio_data[0::2]
                         right = audio_data[1::2]
                     else:
                         left = right = audio_data
 
-                    # RMS seviyesi (0-1 arasÄ± normalize). Epsilon ile negatif kÃ¶k hatalarÄ±nÄ± engelle.
-                    eps = 1e-12
-                    left_rms = float(np.sqrt(max(eps, float(np.mean(left * left))))) / 32768.0
-                    right_rms = float(np.sqrt(max(eps, float(np.mean(right * right))))) / 32768.0
+                    # RMS seviyesi (0-1 arası normalize). Epsilon ile negatif kök hatalarını engelle.
+                    left_rms = float(np.sqrt(max(EPSILON, float(np.mean(left * left))))) / INT16_MAX
+                    right_rms = float(np.sqrt(max(EPSILON, float(np.mean(right * right))))) / INT16_MAX
 
-            # NaN/Inf temizle ve 0..1 aralÄ±ÄŸÄ±na kÄ±rp
+            # NaN/Inf temizle ve 0..1 aralığına kırp
             def _sanitize(v: float) -> float:
                 if not np.isfinite(v):
                     return 0.0
@@ -131,27 +140,16 @@ class AudioMonitor(QObject):
             left_rms = _sanitize(left_rms)
             right_rms = _sanitize(right_rms)
 
-            # Stereo ayrÄ±mÄ±
-            if self.channels == 2:
-                left = audio_data[0::2]
-                right = audio_data[1::2]
-            else:
-                left = right = audio_data
-
-            # RMS seviyesi hesapla (0-1 arasÄ± normalize)
-            left_rms = np.sqrt(np.mean(left**2)) / 32768.0
-            right_rms = np.sqrt(np.mean(right**2)) / 32768.0
-
-            # Sinyal yayÄ±nla
+            # Sinyal yayınla
             self.level_updated.emit(left_rms, right_rms)
 
         except Exception as e:
-            _logger.exception("Audio callback hatasÄ±")
+            _logger.exception("Audio callback hatası")
         
         return (in_data, pyaudio.paContinue)
 
-    def stop(self):
-        """Ses kartÄ± okumayÄ± durdur"""
+    def stop(self) -> None:
+        """Ses kartı okumayı durdur"""
         self.is_running = False
 
         if self.stream:
@@ -163,18 +161,18 @@ class AudioMonitor(QObject):
 
     @staticmethod
     def get_audio_devices():
-        """Mevcut ses kartlarÄ±nÄ± listele (giriÅŸ ve loopback)"""
+        """Mevcut ses kartlarını listele (giriş ve loopback)"""
         pa = pyaudio.PyAudio()
         devices = []
 
-        # Windows iÃ§in WASAPI loopback cihazlarÄ±nÄ± bul
+        # Windows için WASAPI loopback cihazlarını bul
         import platform
         if platform.system() == 'Windows':
             try:
                 # pyaudiowpatch ile WASAPI loopback'i bul
                 wasapi_info = pa.get_host_api_info_by_type(pyaudio.paWASAPI)
 
-                # VarsayÄ±lan WASAPI loopback cihazÄ±nÄ± bul
+                # Varsayılan WASAPI loopback cihazını bul
                 default_speakers = pa.get_device_info_by_index(wasapi_info["defaultOutputDevice"])
 
                 # Loopback versiyonunu kontrol et
@@ -196,9 +194,9 @@ class AudioMonitor(QObject):
                         'is_loopback': True
                     })
             except Exception as e:
-                _logger.warning(f"WASAPI loopback bulunamadÄ±: {e}")
+                _logger.warning(f"WASAPI loopback bulunamadı: {e}")
 
-        # Sonra normal giriÅŸ cihazlarÄ±nÄ± ekle
+        # Sonra normal giriş cihazlarını ekle
         for i in range(pa.get_device_count()):
             try:
                 info = pa.get_device_info_by_index(i)
@@ -210,7 +208,7 @@ class AudioMonitor(QObject):
                         'is_loopback': False
                     })
             except Exception as e:
-                _logger.debug(f"Cihaz okunamadÄ± (index {i}): {e}")
+                _logger.debug(f"Cihaz okunamadı (index {i}): {e}")
                 pass
 
         pa.terminate()
@@ -218,7 +216,7 @@ class AudioMonitor(QObject):
 
 
 class VUMeterWidget(QWidget):
-    """VU Meter gÃ¶rselleÅŸtirme widget'Ä±"""
+    """VU Meter görselleştirme widget'ı"""
 
     def __init__(self):
         super().__init__()
@@ -230,7 +228,7 @@ class VUMeterWidget(QWidget):
         self.init_ui()
 
     def init_ui(self):
-        """UI bileÅŸenlerini oluÅŸtur"""
+        """UI bileşenlerini oluştur"""
         layout = QVBoxLayout()
 
         # Sol kanal
@@ -258,9 +256,9 @@ class VUMeterWidget(QWidget):
         left_layout.addWidget(self.left_bar)
         left_layout.addWidget(self.left_db_label)
 
-        # SaÄŸ kanal
+        # Sağ kanal
         right_layout = QHBoxLayout()
-        right_label = QLabel("SaÄŸ:")
+        right_label = QLabel("Sağ:")
         right_label.setFixedWidth(40)
         self.right_bar = QProgressBar()
         self.right_bar.setMaximum(100)
@@ -283,7 +281,7 @@ class VUMeterWidget(QWidget):
         right_layout.addWidget(self.right_bar)
         right_layout.addWidget(self.right_db_label)
 
-        # Peak gÃ¶stergesi
+        # Peak göstergesi
         peak_layout = QHBoxLayout()
         peak_label = QLabel("Peak:")
         peak_label.setFixedWidth(40)
@@ -298,9 +296,9 @@ class VUMeterWidget(QWidget):
 
         self.setLayout(layout)
 
-    def update_levels(self, left, right):
-        """Ses seviyelerini gÃ¼ncelle"""
-        # NaN/Inf temizle, 0..1'e kÄ±rp
+    def update_levels(self, left: float, right: float) -> None:
+        """Ses seviyelerini güncelle"""
+        # NaN/Inf temizle, 0..1'e kırp
         def _s(v: float) -> float:
             try:
                 v = float(v)
@@ -318,10 +316,10 @@ class VUMeterWidget(QWidget):
         self.right_level = _s(right)
 
         # Peak tracking
-        self.peak_left = max(self.peak_left * 0.95, self.left_level)
-        self.peak_right = max(self.peak_right * 0.95, self.right_level)
+        self.peak_left = max(self.peak_left * PEAK_DECAY_FACTOR, self.left_level)
+        self.peak_right = max(self.peak_right * PEAK_DECAY_FACTOR, self.right_level)
 
-        # Progress bar gÃ¼ncelle (0-100 arasÄ±)
+        # Progress bar güncelle (0-100 arası)
         left_percent = int(round(self.left_level * 100))
         right_percent = int(round(self.right_level * 100))
 
@@ -333,7 +331,7 @@ class VUMeterWidget(QWidget):
         right_db = self._linear_to_db(self.right_level)
         peak_db = self._linear_to_db(max(self.peak_left, self.peak_right))
 
-        # dB â†’ % (min_db..0 dB) ve progress bar gÃ¼ncelle
+        # dB → % (min_db..0 dB) ve progress bar güncelle
         def _db_to_percent(dbv: float) -> int:
             import numpy as _np
             if not _np.isfinite(dbv):
@@ -354,16 +352,16 @@ class VUMeterWidget(QWidget):
         self.peak_label.setText(f"{peak_db:.1f} dB")
 
     @staticmethod
-    def _linear_to_db(linear):
-        """Linear deÄŸeri dB'ye Ã§evir"""
-        if linear > 1e-12:
+    def _linear_to_db(linear: float) -> float:
+        """Linear değeri dB'ye çevir"""
+        if linear > EPSILON:
             return 20 * np.log10(linear)
         else:
             return -float('inf')
 
 
     def set_min_db(self, min_db: float):
-        """Meter alt dB aralÄ±ÄŸÄ±nÄ± ayarla (Ã¶rn. -90, -60)."""
+        """Meter alt dB aralığını ayarla (örn. -90, -60)."""
         try:
             val = float(min_db)
         except Exception:
@@ -384,17 +382,17 @@ class VUMeterApp(QMainWindow):
         self._last_right = 0.0
         self.init_ui()
 
-        # Sinyal baÄŸlantÄ±larÄ±
+        # Sinyal bağlantıları
         self.audio_monitor.level_updated.connect(self.on_level_updated)
         self.audio_monitor.error_occurred.connect(self.on_error)
         
-        # 120 FPS GUI gÃ¼ncelleme zamanlayÄ±cÄ±sÄ± (~8 ms)
+        # 120 FPS GUI güncelleme zamanlayıcısı (~8 ms)
         self.gui_timer = QTimer(self)
-        self.gui_timer.setInterval(8)
+        self.gui_timer.setInterval(GUI_UPDATE_INTERVAL_MS)
         self.gui_timer.timeout.connect(self._on_gui_tick)
 
     def init_ui(self):
-        """UI oluÅŸtur"""
+        """UI oluştur"""
         self.setWindowTitle(f"Audio VU Meter v{__version__}")
         self.setGeometry(100, 100, 600, 250)
 
@@ -404,21 +402,21 @@ class VUMeterApp(QMainWindow):
 
         layout = QVBoxLayout()
 
-        # BaÅŸlÄ±k
-        title = QLabel("GerÃ§ek ZamanlÄ± VU Meter - Mikrofon & Sistem Sesi")
+        # Başlık
+        title = QLabel("Gerçek Zamanlı VU Meter - Mikrofon & Sistem Sesi")
         title.setStyleSheet("font-size: 16px; font-weight: bold; padding: 10px;")
         layout.addWidget(title)
 
-        # Cihaz seÃ§imi
+        # Cihaz seçimi
         device_layout = QHBoxLayout()
-        device_label = QLabel("Ses KartÄ±:")
+        device_label = QLabel("Ses Kartı:")
         self.device_combo = QComboBox()
         self.refresh_devices()
         device_layout.addWidget(device_label)
         device_layout.addWidget(self.device_combo)
 
-        # AralÄ±k (dB) seÃ§imi
-        range_label = QLabel("AralÄ±k:")
+        # Aralık (dB) seçimi
+        range_label = QLabel("Aralık:")
         self.range_combo = QComboBox()
         for val in (-90, -60, -48, -40, -30):
             self.range_combo.addItem(f"{val} dB", float(val))
@@ -434,10 +432,10 @@ class VUMeterApp(QMainWindow):
         self.vu_widget = VUMeterWidget()
         layout.addWidget(self.vu_widget)
 
-        # Kontrol butonlarÄ±
+        # Kontrol butonları
         button_layout = QHBoxLayout()
 
-        self.start_button = QPushButton("BaÅŸlat")
+        self.start_button = QPushButton("Başlat")
         self.start_button.clicked.connect(self.start_monitoring)
         self.start_button.setStyleSheet("padding: 10px; font-size: 14px;")
 
@@ -457,41 +455,41 @@ class VUMeterApp(QMainWindow):
         layout.addLayout(button_layout)
 
         # Status bar
-        self.status_label = QLabel("HazÄ±r")
+        self.status_label = QLabel("Hazır")
         self.status_label.setStyleSheet("padding: 5px; background-color: #f0f0f0;")
         layout.addWidget(self.status_label)
 
         central_widget.setLayout(layout)
 
     def refresh_devices(self):
-        """Ses kartlarÄ±nÄ± yenile"""
+        """Ses kartlarını yenile"""
         self.device_combo.clear()
         devices = AudioMonitor.get_audio_devices()
 
         for device in devices:
             self.device_combo.addItem(
                 f"{device['name']} ({device['channels']} kanal)",
-                device  # TÃ¼m device bilgisini data olarak sakla
+                device  # Tüm device bilgisini data olarak sakla
             )
 
     def start_monitoring(self):
-        """Ä°zlemeyi baÅŸlat"""
-        # SeÃ§ilen cihazÄ± al
+        """İzlemeyi başlat"""
+        # Seçilen cihazı al
         device_info = self.device_combo.currentData()
         if device_info is not None:
             self.audio_monitor.device_index = device_info['index']
             self.audio_monitor.use_loopback = device_info.get('is_loopback', False)
 
-        # BaÅŸlat
+        # Başlat
         self.audio_monitor.start()
         self.gui_timer.start()
 
-        # UI gÃ¼ncelle
+        # UI güncelle
         self.start_button.setEnabled(False)
         self.stop_button.setEnabled(True)
         self.device_combo.setEnabled(False)
 
-        # Loopback ise farklÄ± mesaj gÃ¶ster
+        # Loopback ise farklı mesaj göster
         if self.audio_monitor.use_loopback:
             self.status_label.setText("Sistem sesi dinleniyor (Edge, YouTube vb.)...")
         else:
@@ -499,25 +497,25 @@ class VUMeterApp(QMainWindow):
         self.status_label.setStyleSheet("padding: 5px; background-color: #90EE90;")
 
     def stop_monitoring(self):
-        """Ä°zlemeyi durdur"""
+        """İzlemeyi durdur"""
         self.audio_monitor.stop()
 
-        # UI gÃ¼ncelle
+        # UI güncelle
         self.start_button.setEnabled(True)
         self.stop_button.setEnabled(False)
         self.device_combo.setEnabled(True)
         self.status_label.setText("Durduruldu")
         self.status_label.setStyleSheet("padding: 5px; background-color: #FFB6C1;")
 
-        # VU meter'Ä± sÄ±fÄ±rla
+        # VU meter'ı sıfırla
         self.vu_widget.update_levels(0, 0)
 
     def on_level_updated(self, left, right):
-        """Ses seviyesi gÃ¼ncellendiÄŸinde"""
+        """Ses seviyesi güncellendiğinde"""
         try:
             self.vu_widget.update_levels(left, right)
         except Exception:
-            _logger.exception("UI update_levels hatasÄ±")
+            _logger.exception("UI update_levels hatası")
 
 
     def _on_gui_tick(self):
@@ -536,13 +534,13 @@ class VUMeterApp(QMainWindow):
         except Exception:
             _logger.exception("on_range_changed hatası")
     def on_error(self, error_msg):
-        """Hata oluÅŸtuÄŸunda"""
+        """Hata oluştuğunda"""
         self.status_label.setText(f"Hata: {error_msg}")
         self.status_label.setStyleSheet("padding: 5px; background-color: #FFB6C1;")
         self.stop_monitoring()
 
     def closeEvent(self, event):
-        """Pencere kapatÄ±ldÄ±ÄŸÄ±nda"""
+        """Pencere kapatıldığında"""
         self.audio_monitor.stop()
         event.accept()
 
