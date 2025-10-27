@@ -29,6 +29,14 @@ try:
 except ImportError:
     DMX_AVAILABLE = False
 
+# RNN Dim Controller için
+try:
+    import torch
+    from rnn_dim_controller import initialize_rnn_controller, get_rnn_controller
+    RNN_AVAILABLE = True
+except ImportError:
+    RNN_AVAILABLE = False
+
 __version__ = "1.7.1"
 
 # Audio Constants
@@ -228,6 +236,17 @@ class DMXController:
         self.logger = logger_instance or logger
         self.enabled = False
         
+        # RNN Dim Controller
+        self.rnn_enabled = False
+        self.rnn_controller = None
+        if RNN_AVAILABLE:
+            try:
+                self.rnn_controller = initialize_rnn_controller()
+                self.logger.info("RNN Dim Controller initialized")
+            except Exception as e:
+                self.logger.warning(f"RNN Dim Controller initialization failed: {e}")
+                self.rnn_controller = None
+        
         # Color mapping for audio bands (Channel 3 values)
         # 0-9: White, 10+: Colors (Red, Yellow, Green, Cyan, Blue, Magenta, etc.)
         self.color_map = {
@@ -344,6 +363,55 @@ class DMXController:
         # 🎵 Llow seviyesini hesapla (L ve R kanallarının ortalaması)
         llow_level = (llow + rlow) / 2.0
         
+        # 🤖 RNN DIM CONTROL: Eğer RNN aktifse, RNN ile dim değerini tahmin et
+        if self.rnn_enabled and self.rnn_controller:
+            try:
+                # RNN'e ses verilerini gönder ve dim değerini tahmin et
+                audio_bands = [llow, lmid, lhigh, rlow, rmid, rhigh]
+                rnn_dimmer = self.rnn_controller.predict_dimmer(audio_bands)
+                
+                # Mevcut dimmer değerini RNN'e öğretmek için kaydet
+                current_dimmer = self.dmx_data[5]  # Channel 6 (0-indexed)
+                self.rnn_controller.add_audio_sample(audio_bands, current_dimmer)
+                
+                # RNN tahminini kullan
+                base_brightness = rnn_dimmer
+                self.logger.debug(f"RNN predicted dimmer: {rnn_dimmer}")
+                
+            except Exception as e:
+                self.logger.warning(f"RNN prediction failed, falling back to heuristic: {e}")
+                # Fallback to original logic
+                base_brightness = self._calculate_heuristic_dimmer(llow_level, range_config)
+        else:
+            # 🎚️ RANGE SCALING: Range light min/max dB'ye göre scale et
+            base_brightness = self._calculate_heuristic_dimmer(llow_level, range_config)
+        
+        # 🔥 BEAT FLASH: Beat anında maksimum parlaklık!
+        if beat_flash:
+            brightness = 255  # Full brightness on beat!
+        else:
+            brightness = base_brightness
+        
+        # Minimum eşik: Çok düşük seslerde kapansın
+        if base_brightness < 10:
+            self.set_channel(6, 0)      # Dimmer off
+            self.send_frame()
+            return
+        
+        # Channel 6: Dimmer - RNN tahmini veya Range Scaling
+        self.set_channel(6, base_brightness)
+        
+        # Channel 3: Renk - MANUEL KONTROL (GUI'den ayarlanır)
+        # Bu kanal artık otomatik değişmez, sadece GUI'den set edilir
+        
+        # Channel 5: Master Dimmer - MANUEL KONTROL (GUI'den ayarlanır)
+        # Bu kanal artık otomatik değişmez, sadece GUI'den set edilir
+        
+        # Send the frame
+        self.send_frame()
+    
+    def _calculate_heuristic_dimmer(self, llow_level, range_config):
+        """Calculate dimmer value using original heuristic method"""
         # 🎚️ RANGE SCALING: Range light min/max dB'ye göre scale et
         if range_config and 'min_db' in range_config and 'max_db' in range_config:
             min_db = float(range_config['min_db'])
@@ -368,31 +436,36 @@ class DMXController:
         
         # Base parlaklık: Scaled Llow seviyesine göre (0-255)
         base_brightness = int(llow_level * 255)
-        base_brightness = max(0, min(255, base_brightness))
-        
-        # 🔥 BEAT FLASH: Beat anında maksimum parlaklık!
-        if beat_flash:
-            brightness = 255  # Full brightness on beat!
+        return max(0, min(255, base_brightness))
+    
+    def enable_rnn_mode(self, enabled: bool):
+        """Enable/disable RNN dimmer control mode"""
+        self.rnn_enabled = enabled
+        if enabled and self.rnn_controller:
+            self.logger.info("RNN Dimmer Control enabled")
         else:
-            brightness = base_brightness
+            self.logger.info("RNN Dimmer Control disabled")
+    
+    def train_rnn_model(self, epochs: int = 100):
+        """Train the RNN model with collected data"""
+        if not self.rnn_controller:
+            self.logger.error("RNN Controller not available")
+            return False
         
-        # Minimum eşik: Çok düşük seslerde kapansın
-        if base_brightness < 10:
-            self.set_channel(6, 0)      # Dimmer off
-            self.send_frame()
-            return
-        
-        # Channel 6: Dimmer - Sadece Range Scaling (Beat Flash YOK!)
-        self.set_channel(6, base_brightness)  # base_brightness kullan (beat_flash yok)
-        
-        # Channel 3: Renk - MANUEL KONTROL (GUI'den ayarlanır)
-        # Bu kanal artık otomatik değişmez, sadece GUI'den set edilir
-        
-        # Channel 5: Master Dimmer - MANUEL KONTROL (GUI'den ayarlanır)
-        # Bu kanal artık otomatik değişmez, sadece GUI'den set edilir
-        
-        # Send the frame
-        self.send_frame()
+        try:
+            self.logger.info(f"Starting RNN training with {epochs} epochs...")
+            self.rnn_controller.train_model(epochs=epochs)
+            self.logger.info("RNN training completed successfully")
+            return True
+        except Exception as e:
+            self.logger.error(f"RNN training failed: {e}")
+            return False
+    
+    def get_rnn_stats(self):
+        """Get RNN training statistics"""
+        if not self.rnn_controller:
+            return None
+        return self.rnn_controller.get_training_stats()
 
 
 class VUMeterWidget(QWidget):
@@ -1327,6 +1400,58 @@ class VUMeterApp(QMainWindow):
         dmx_auto_frame.addStretch()
         layout.addLayout(dmx_auto_frame)
         
+        # RNN Dim Control Panel
+        if RNN_AVAILABLE:
+            rnn_frame = QHBoxLayout()
+            rnn_label = QLabel("🤖 RNN Dim Control:")
+            rnn_label.setStyleSheet("font-weight:bold; color:#9C27B0;")
+            rnn_frame.addWidget(rnn_label)
+            
+            # RNN Enable/Disable
+            self.rnn_enable_checkbox = QCheckBox("RNN Aktif")
+            self.rnn_enable_checkbox.setToolTip("RNN ile otomatik dimmer kontrolü")
+            self.rnn_enable_checkbox.stateChanged.connect(self.on_rnn_enable_changed)
+            rnn_frame.addWidget(self.rnn_enable_checkbox)
+            
+            # RNN Training
+            self.rnn_train_btn = QPushButton("RNN Eğit")
+            self.rnn_train_btn.setToolTip("Toplanan verilerle RNN modelini eğit")
+            self.rnn_train_btn.clicked.connect(self.train_rnn_model)
+            self.rnn_train_btn.setStyleSheet("background-color:#FF9800; color:white; padding:3px;")
+            rnn_frame.addWidget(self.rnn_train_btn)
+            
+            # Epochs input
+            epochs_label = QLabel("Epochs:")
+            rnn_frame.addWidget(epochs_label)
+            self.rnn_epochs_spin = QSpinBox()
+            self.rnn_epochs_spin.setRange(10, 1000)
+            self.rnn_epochs_spin.setValue(100)
+            self.rnn_epochs_spin.setToolTip("Eğitim epoch sayısı")
+            rnn_frame.addWidget(self.rnn_epochs_spin)
+            
+            # RNN Status
+            self.rnn_status_label = QLabel("RNN: Kapalı")
+            self.rnn_status_label.setStyleSheet("color:red; font-weight:bold;")
+            rnn_frame.addWidget(self.rnn_status_label)
+            
+            # RNN Stats
+            self.rnn_stats_label = QLabel("Samples: 0")
+            self.rnn_stats_label.setStyleSheet("color:#666; font-size:9px;")
+            rnn_frame.addWidget(self.rnn_stats_label)
+            
+            rnn_frame.addStretch()
+            layout.addLayout(rnn_frame)
+            
+            # RNN Info
+            rnn_info = QLabel("🧠 RNN: LSTM ile ses verilerinden dimmer değeri tahmin eder. Önce veri topla, sonra eğit!")
+            rnn_info.setStyleSheet("font-size:9px; color:#9C27B0; font-weight:bold; padding:3px; background-color:#F3E5F5; border-radius:3px;")
+            layout.addWidget(rnn_info)
+        else:
+            # RNN not available
+            rnn_unavailable = QLabel("🤖 RNN Dim Control: PyTorch gerekli (pip install torch)")
+            rnn_unavailable.setStyleSheet("font-size:9px; color:#999; font-style:italic; padding:3px; background-color:#f5f5f5; border-radius:3px;")
+            layout.addWidget(rnn_unavailable)
+        
         # DMX cihazlarını listele
         self.refresh_dmx_devices()
 
@@ -1523,6 +1648,16 @@ class VUMeterApp(QMainWindow):
                     self.dmx_ch6_value.setStyleSheet("background:#e0e0e0; padding:3px; border:1px solid #ccc; font-weight:bold; color:#999;")
             except Exception:
                 pass
+        
+        # RNN istatistiklerini güncelle (her 60 tick'te bir)
+        if hasattr(self, '_rnn_stats_counter'):
+            self._rnn_stats_counter += 1
+        else:
+            self._rnn_stats_counter = 0
+            
+        if self._rnn_stats_counter >= 60:  # ~1 saniyede bir güncelle
+            self._rnn_stats_counter = 0
+            self.update_rnn_stats()
         
         # Build 8 bytes for LED output and display
         try:
@@ -1862,6 +1997,83 @@ class VUMeterApp(QMainWindow):
             logger.info("DMX pozisyonu merkeze getirildi (127, 127)")
         except Exception as e:
             logger.error(f"DMX reset hatası: {e}")
+    
+    def on_rnn_enable_changed(self, state):
+        """RNN enable/disable checkbox değiştiğinde"""
+        try:
+            enabled = state == 2  # Qt.Checked = 2
+            if hasattr(self, 'dmx_controller'):
+                self.dmx_controller.enable_rnn_mode(enabled)
+                
+                # UI güncelle
+                if enabled:
+                    self.rnn_status_label.setText("RNN: Aktif")
+                    self.rnn_status_label.setStyleSheet("color:green; font-weight:bold;")
+                else:
+                    self.rnn_status_label.setText("RNN: Kapalı")
+                    self.rnn_status_label.setStyleSheet("color:red; font-weight:bold;")
+                    
+                logger.info(f"RNN mode {'enabled' if enabled else 'disabled'}")
+        except Exception as e:
+            logger.error(f"RNN enable/disable hatası: {e}")
+    
+    def train_rnn_model(self):
+        """RNN modelini eğit"""
+        try:
+            if not hasattr(self, 'dmx_controller') or not self.dmx_controller.rnn_controller:
+                logger.error("RNN Controller mevcut değil")
+                return
+                
+            epochs = self.rnn_epochs_spin.value()
+            logger.info(f"RNN eğitimi başlatılıyor ({epochs} epochs)...")
+            
+            # UI'yi güncelle
+            self.rnn_train_btn.setText("Eğitiliyor...")
+            self.rnn_train_btn.setEnabled(False)
+            
+            # Eğitimi başlat
+            success = self.dmx_controller.train_rnn_model(epochs=epochs)
+            
+            if success:
+                logger.info("RNN eğitimi tamamlandı")
+                self.rnn_train_btn.setText("✅ Eğitildi")
+            else:
+                logger.error("RNN eğitimi başarısız")
+                self.rnn_train_btn.setText("❌ Hata")
+            
+            # UI'yi geri yükle
+            self.rnn_train_btn.setEnabled(True)
+            
+        except Exception as e:
+            logger.error(f"RNN eğitim hatası: {e}")
+            if hasattr(self, 'rnn_train_btn'):
+                self.rnn_train_btn.setText("❌ Hata")
+                self.rnn_train_btn.setEnabled(True)
+    
+    def update_rnn_stats(self):
+        """RNN istatistiklerini güncelle"""
+        try:
+            if hasattr(self, 'dmx_controller') and self.dmx_controller.rnn_controller:
+                stats = self.dmx_controller.get_rnn_stats()
+                if stats:
+                    samples = stats.get('samples_collected', 0)
+                    is_training = stats.get('is_training', False)
+                    last_loss = stats.get('last_loss')
+                    
+                    self.rnn_stats_label.setText(f"Samples: {samples}")
+                    
+                    if is_training:
+                        self.rnn_train_btn.setText("Eğitiliyor...")
+                        self.rnn_train_btn.setEnabled(False)
+                    else:
+                        self.rnn_train_btn.setText("RNN Eğit")
+                        self.rnn_train_btn.setEnabled(True)
+                        
+                    if last_loss is not None:
+                        self.rnn_stats_label.setText(f"Samples: {samples} | Loss: {last_loss:.6f}")
+                        
+        except Exception as e:
+            logger.debug(f"RNN stats güncelleme hatası: {e}")
 
     def closeEvent(self, event):
         try:

@@ -19,3 +19,6 @@ pyserial>=3.5
 # USB DMX kontrol
 pyusb>=1.2.1
 
+# RNN Dim Controller
+torch>=1.9.0
+
