@@ -2602,10 +2602,6 @@ class VUMeterApp(QMainWindow):
         if hasattr(self, 'dmx_controller') and self.dmx_controller and hasattr(self.dmx_controller, 'rnn_controller') and self.dmx_controller.rnn_controller:
             self.dmx_controller.rnn_controller.tilt_offset = self.tilt_offset_spinbox.value()
             print(f"🎛️ Tilt offset set to: {self.tilt_offset_spinbox.value()}")
-        if hasattr(self, 'rnn_train_btn'):
-            self.rnn_train_btn.setToolTip(f"Toplanan verilerle RNN modelini eğit ({value}+ sample gerekli)")
-        
-        logger.info(f"Sample hedefi değiştirildi: {value}")
     
     def on_auto_training_changed(self, state):
         """Otomatik eğitim checkbox değiştiğinde"""
