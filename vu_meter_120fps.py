@@ -469,7 +469,8 @@ class DMXController:
                 color_value = rnn_prediction['color']
                 base_brightness = rnn_prediction['dimmer']
                 
-                print(f"🎯 RNN DMX: Pan={pan_value}, Tilt={tilt_value}, Color={color_value}, Dimmer={base_brightness}")
+                # Debug disabled - RNN DMX values
+                # print(f"🎯 RNN DMX: Pan={pan_value}, Tilt={tilt_value}, Color={color_value}, Dimmer={base_brightness}")
                 self.logger.debug(f"RNN predicted: Pan={pan_value}, Tilt={tilt_value}, Color={color_value}, Dimmer={base_brightness}")
                 
             except Exception as e:

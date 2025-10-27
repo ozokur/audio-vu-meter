@@ -341,13 +341,14 @@ class RNNDimController:
             # Beat anında dimmer 255 olsun - daha agresif threshold
             if beat_intensity > 0.1:  # Beat threshold düşürüldü (0.3 -> 0.1)
                 dimmer_value = 255  # Maximum brightness on beat
-                print(f"🔥 BEAT DETECTED! Dimmer=255, beat_intensity={beat_intensity:.3f}")
+                # Debug disabled - Beat detection
+                # print(f"🔥 BEAT DETECTED! Dimmer=255, beat_intensity={beat_intensity:.3f}")
             else:
                 dimmer_value = int(dimmer_raw + audio_dimmer_influence + audio_level_boost + beat_dimmer_boost)
-                # Debug: Beat olmadığında da göster
-                if current_time - self._last_debug_time > 2.0:
-                    print(f"🎵 No beat: Dimmer={dimmer_value}, beat_intensity={beat_intensity:.3f}")
-                    self._last_debug_time = current_time
+                # Debug disabled - No beat
+                # if current_time - self._last_debug_time > 2.0:
+                #     print(f"🎵 No beat: Dimmer={dimmer_value}, beat_intensity={beat_intensity:.3f}")
+                #     self._last_debug_time = current_time
         else:
             # Fallback to enhanced RNN only
             pan_value = int(64 + (predicted_values[0] * 255 - 127) * 1.5)
@@ -362,11 +363,11 @@ class RNNDimController:
             'dimmer': max(0, min(255, dimmer_value))
         }
         
-        # Debug: Show values every 2 seconds
-        if current_time - self._last_debug_time > 2.0:
-            print(f"🔍 RNN Raw: {[f'{v:.3f}' for v in predicted_values]}")
-            print(f"🎯 RNN Final: Pan={result['pan']}, Tilt={result['tilt']}, Color={result['color']}, Dimmer={result['dimmer']}")
-            self._last_debug_time = current_time
+        # Debug disabled - RNN values
+        # if current_time - self._last_debug_time > 2.0:
+        #     print(f"🔍 RNN Raw: {[f'{v:.3f}' for v in predicted_values]}")
+        #     print(f"🎯 RNN Final: Pan={result['pan']}, Tilt={result['tilt']}, Color={result['color']}, Dimmer={result['dimmer']}")
+        #     self._last_debug_time = current_time
         
         return result
     
