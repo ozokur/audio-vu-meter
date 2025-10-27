@@ -3,6 +3,49 @@
 All notable changes to this project will be documented in this file.
 This project uses Semantic Versioning (MAJOR.MINOR.PATCH) and a Keep a Changelog‑style format.
 
+## [1.8.0] - 2025-10-27
+### Added
+- **🤖 Enhanced RNN Multi-Channel Control System**
+  - ✅ Pan/Tilt offset controls in GUI (-127 to +127 range)
+  - ✅ Frequency-based color system (Bass=Red, Mid=Yellow, Treble=Blue)
+  - ✅ Aggressive beat detection with 2x intensity boost
+  - ✅ Beat anında dimmer 255 (maximum brightness)
+  - ✅ Enhanced audio responsiveness (1.5x pan, 1.2x tilt movement)
+  - ✅ RNN training script (train_rnn.py) for separate process training
+  - ✅ Smart random color mode option in GUI
+
+### Changed
+- **🎵 Improved Beat Detection Algorithm**
+  - ✅ Beat threshold lowered from 0.3 to 0.1 (3x more sensitive)
+  - ✅ Beat intensity calculation enhanced with all frequency bands
+  - ✅ Beat anında automatic dimmer boost to 255
+  - ✅ More responsive to low-volume music
+
+- **🎨 Enhanced Color System**
+  - ✅ Pure frequency-based color calculation (no RNN dependency)
+  - ✅ Dominant frequency detection (Low/Mid/High priority)
+  - ✅ Dynamic color ranges: Red(15-35), Yellow(35-70), Blue(70-120)
+  - ✅ Real-time color changes based on music frequency content
+
+- **🎛️ Improved Pan/Tilt Control**
+  - ✅ Pan movement: 2x more aggressive (150x multiplier)
+  - ✅ Tilt movement: 1.5x more responsive (120x multiplier)
+  - ✅ Beat boost for both pan and tilt (80x and 60x respectively)
+  - ✅ Manual offset controls for fine-tuning
+
+### Technical Details
+- **RNN Architecture**: 8-input LSTM (6 audio + beat_intensity + color_mode)
+- **Sequence Length**: 10 samples (optimized for real-time)
+- **Training Data**: Audio sequences with DMX values (Pan/Tilt/Color/Dimmer)
+- **Fallback System**: Heuristic control when RNN insufficient data
+- **Debug System**: Clean console output (debug messages disabled)
+
+### Fixed
+- ✅ Syntax error in tilt offset handler
+- ✅ RNN prediction fallback when no training data
+- ✅ Console spam from excessive debug messages
+- ✅ Beat detection sensitivity issues
+
 ## [1.7.1] - 2025-10-19
 ### Changed
 - **⚡ Optimized Chunk Size for Better Responsiveness**
