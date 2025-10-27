@@ -3,7 +3,7 @@
   "range_cfg": {
     "Llow": {
       "min_db": -22.0,
-      "max_db": -18.0,
+      "max_db": 0.0,
       "one_shot": false,
       "shot_ms": 120
     },

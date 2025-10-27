@@ -363,16 +363,21 @@ class DMXController:
         # 🎵 Llow seviyesini hesapla (L ve R kanallarının ortalaması)
         llow_level = (llow + rlow) / 2.0
         
+        # 📊 VERİ TOPLAMA: RNN controller varsa her zaman veri topla
+        if self.rnn_controller:
+            try:
+                audio_bands = [llow, lmid, lhigh, rlow, rmid, rhigh]
+                current_dimmer = self.dmx_data[5]  # Channel 6 (0-indexed)
+                self.rnn_controller.add_audio_sample(audio_bands, current_dimmer)
+            except Exception as e:
+                self.logger.debug(f"RNN data collection failed: {e}")
+        
         # 🤖 RNN DIM CONTROL: Eğer RNN aktifse, RNN ile dim değerini tahmin et
         if self.rnn_enabled and self.rnn_controller:
             try:
                 # RNN'e ses verilerini gönder ve dim değerini tahmin et
                 audio_bands = [llow, lmid, lhigh, rlow, rmid, rhigh]
                 rnn_dimmer = self.rnn_controller.predict_dimmer(audio_bands)
-                
-                # Mevcut dimmer değerini RNN'e öğretmek için kaydet
-                current_dimmer = self.dmx_data[5]  # Channel 6 (0-indexed)
-                self.rnn_controller.add_audio_sample(audio_bands, current_dimmer)
                 
                 # RNN tahminini kullan
                 base_brightness = rnn_dimmer
@@ -457,6 +462,25 @@ class DMXController:
             self.rnn_controller.train_model(epochs=epochs)
             self.logger.info("RNN training completed successfully")
             return True
+        except Exception as e:
+            self.logger.error(f"RNN training failed: {e}")
+            return False
+    
+    def train_rnn_model_with_progress(self, epochs: int = 100, progress_callback=None):
+        """Train the RNN model with progress callback"""
+        if not self.rnn_controller:
+            self.logger.error("RNN Controller not available")
+            return False
+        
+        try:
+            self.logger.info(f"Starting RNN training with {epochs} epochs...")
+            success = self.rnn_controller.train_model_with_progress(
+                epochs=epochs, 
+                progress_callback=progress_callback
+            )
+            if success:
+                self.logger.info("RNN training completed successfully")
+            return success
         except Exception as e:
             self.logger.error(f"RNN training failed: {e}")
             return False
@@ -1420,6 +1444,14 @@ class VUMeterApp(QMainWindow):
             self.rnn_train_btn.setStyleSheet("background-color:#FF9800; color:white; padding:3px;")
             rnn_frame.addWidget(self.rnn_train_btn)
             
+            # RNN Training Progress Bar
+            self.rnn_progress = QProgressBar()
+            self.rnn_progress.setVisible(False)
+            self.rnn_progress.setRange(0, 100)
+            self.rnn_progress.setValue(0)
+            self.rnn_progress.setStyleSheet("QProgressBar { border: 2px solid #9C27B0; border-radius: 5px; text-align: center; } QProgressBar::chunk { background-color: #9C27B0; }")
+            rnn_frame.addWidget(self.rnn_progress)
+            
             # Epochs input
             epochs_label = QLabel("Epochs:")
             rnn_frame.addWidget(epochs_label)
@@ -1578,68 +1610,93 @@ class VUMeterApp(QMainWindow):
         self.vu_widget.update_levels(self._last_left, self._last_right)
         self.vu_widget.update_bands(self._last_bands)
         
-        # DMX güncelleme - BASIT MOD: Llow seviyesi + Beat Flash
+        # DMX güncelleme - Range Light kontrolü ile
         if hasattr(self, 'dmx_controller') and self.dmx_controller.enabled:
+            # Range Light Enable kontrolü - sadece aktifken DMX çalışsın
+            range_lights_enabled = False
             try:
-                b = list(self._last_bands) if isinstance(self._last_bands, (list, tuple)) else [0]*6
-                while len(b) < 6:
-                    b.append(0.0)
-                llow, lmid, lhigh, rlow, rmid, rhigh = b[:6]
-                
-                # Beat flash kontrolü: Llow tempo state'inden beat tespiti
-                beat_flash = False
+                if hasattr(self.vu_widget, 'range_enable'):
+                    range_lights_enabled = bool(self.vu_widget.range_enable.isChecked())
+            except Exception:
+                pass
+            
+            if range_lights_enabled:
                 try:
-                    now = time.monotonic()
-                    tempo = getattr(self.vu_widget, '_tempo', {})
-                    llow_state = tempo.get('Llow')
-                    if llow_state:
-                        # Beat tespit edildi mi? (on_until aktif ve çok kısa süre geçti)
-                        on_until = float(llow_state.get('on_until', 0.0))
-                        last_flash = float(llow_state.get('last_flash', 0.0))
+                    b = list(self._last_bands) if isinstance(self._last_bands, (list, tuple)) else [0]*6
+                    while len(b) < 6:
+                        b.append(0.0)
+                    llow, lmid, lhigh, rlow, rmid, rhigh = b[:6]
+                    
+                    # Beat flash kontrolü: Llow tempo state'inden beat tespiti
+                    beat_flash = False
+                    try:
+                        now = time.monotonic()
+                        tempo = getattr(self.vu_widget, '_tempo', {})
+                        llow_state = tempo.get('Llow')
+                        if llow_state:
+                            # Beat tespit edildi mi? (on_until aktif ve çok kısa süre geçti)
+                            on_until = float(llow_state.get('on_until', 0.0))
+                            last_flash = float(llow_state.get('last_flash', 0.0))
+                            
+                            # Beat'ten sonraki ilk 50ms'de flash aktif
+                            if now < on_until and (now - last_flash) < 0.05:
+                                beat_flash = True
+                    except Exception:
+                        pass
+                    
+                    # Range config'i al (Llow için)
+                    range_config = None
+                    try:
+                        if hasattr(self.vu_widget, '_range_cfg'):
+                            llow_cfg = self.vu_widget._range_cfg.get('Llow', {})
+                            if llow_cfg:
+                                range_config = {
+                                    'min_db': float(llow_cfg.get('min_db', -60.0)),
+                                    'max_db': float(llow_cfg.get('max_db', 0.0))
+                                }
+                    except Exception:
+                        pass
+                    
+                    # DMX gönder - Sadece Range Scaling (beat_flash=False)
+                    self.dmx_controller.set_audio_reactive(
+                        llow, lmid, lhigh, rlow, rmid, rhigh, None, False, range_config
+                    )
+                    
+                    # Channel 6 değerini GUI'de göster
+                    try:
+                        if hasattr(self, 'dmx_ch6_value'):
+                            ch6_val = int(self.dmx_controller.dmx_data[5]) & 0xFF  # Ch6 = index 5
+                            self.dmx_ch6_value.setText(str(ch6_val))
+                            
+                            # Değere göre renk değiştir (0=gri, 1-254=yeşil tonu, 255=parlak yeşil)
+                            if ch6_val == 0:
+                                ch6_color = "#e0e0e0"
+                            elif ch6_val == 255:
+                                ch6_color = "#4CAF50"
+                            else:
+                                ch6_color = "#90EE90"
+                            
+                            self.dmx_ch6_value.setStyleSheet(f"background:{ch6_color}; padding:3px; border:1px solid #ccc; font-weight:bold; color:#333;")
+                    except Exception:
+                        pass
                         
-                        # Beat'ten sonraki ilk 50ms'de flash aktif
-                        if now < on_until and (now - last_flash) < 0.05:
-                            beat_flash = True
-                except Exception:
-                    pass
-                
-                # Range config'i al (Llow için)
-                range_config = None
+                except Exception as e:
+                    pass  # Sessizce devam et
+            else:
+                # Range Light kapalıysa DMX'i kapat
                 try:
-                    if hasattr(self.vu_widget, '_range_cfg'):
-                        llow_cfg = self.vu_widget._range_cfg.get('Llow', {})
-                        if llow_cfg:
-                            range_config = {
-                                'min_db': float(llow_cfg.get('min_db', -60.0)),
-                                'max_db': float(llow_cfg.get('max_db', 0.0))
-                            }
+                    self.dmx_controller.set_channel(6, 0)  # Ch6 dimmer'ı kapat
+                    self.dmx_controller.send_frame()
                 except Exception:
                     pass
                 
-                # DMX gönder - Sadece Range Scaling (beat_flash=False)
-                self.dmx_controller.set_audio_reactive(
-                    llow, lmid, lhigh, rlow, rmid, rhigh, None, False, range_config
-                )
-                
-                # Channel 6 değerini GUI'de göster (sadece Ch6 otomatik - Range Scaling)
+                # Range Light kapalıysa Ch6 değerini sıfırla
                 try:
                     if hasattr(self, 'dmx_ch6_value'):
-                        ch6_val = int(self.dmx_controller.dmx_data[5]) & 0xFF  # Ch6 = index 5
-                        self.dmx_ch6_value.setText(str(ch6_val))
-                        
-                        # Değere göre renk değiştir (0=gri, 1-254=yeşil tonu, 255=parlak yeşil)
-                        if ch6_val == 0:
-                            ch6_color = "#e0e0e0"
-                        elif ch6_val == 255:
-                            ch6_color = "#4CAF50"
-                        else:
-                            ch6_color = "#90EE90"
-                        
-                        self.dmx_ch6_value.setStyleSheet(f"background:{ch6_color}; padding:3px; border:1px solid #ccc; font-weight:bold; color:#333;")
+                        self.dmx_ch6_value.setText("0")
+                        self.dmx_ch6_value.setStyleSheet("background:#e0e0e0; padding:3px; border:1px solid #ccc; font-weight:bold; color:#999;")
                 except Exception:
                     pass
-            except Exception as e:
-                pass  # Sessizce devam et
         else:
             # DMX kapalıysa Ch6 değerini sıfırla
             try:
@@ -2030,13 +2087,19 @@ class VUMeterApp(QMainWindow):
             # UI'yi güncelle
             self.rnn_train_btn.setText("Eğitiliyor...")
             self.rnn_train_btn.setEnabled(False)
+            self.rnn_progress.setVisible(True)
+            self.rnn_progress.setValue(0)
             
-            # Eğitimi başlat
-            success = self.dmx_controller.train_rnn_model(epochs=epochs)
+            # Eğitimi başlat (ilerleme çubuğu ile)
+            success = self.dmx_controller.train_rnn_model_with_progress(
+                epochs=epochs, 
+                progress_callback=self.update_rnn_progress
+            )
             
             if success:
                 logger.info("RNN eğitimi tamamlandı")
                 self.rnn_train_btn.setText("✅ Eğitildi")
+                self.rnn_progress.setValue(100)
             else:
                 logger.error("RNN eğitimi başarısız")
                 self.rnn_train_btn.setText("❌ Hata")
@@ -2044,11 +2107,24 @@ class VUMeterApp(QMainWindow):
             # UI'yi geri yükle
             self.rnn_train_btn.setEnabled(True)
             
+            # İlerleme çubuğunu gizle (2 saniye sonra)
+            QTimer.singleShot(2000, lambda: self.rnn_progress.setVisible(False))
+            
         except Exception as e:
             logger.error(f"RNN eğitim hatası: {e}")
             if hasattr(self, 'rnn_train_btn'):
                 self.rnn_train_btn.setText("❌ Hata")
                 self.rnn_train_btn.setEnabled(True)
+                self.rnn_progress.setVisible(False)
+    
+    def update_rnn_progress(self, epoch, total_epochs, loss):
+        """RNN eğitim ilerlemesini güncelle"""
+        try:
+            progress = int((epoch / total_epochs) * 100)
+            self.rnn_progress.setValue(progress)
+            self.rnn_progress.setFormat(f"Epoch {epoch}/{total_epochs} - Loss: {loss:.6f}")
+        except Exception as e:
+            logger.debug(f"Progress update error: {e}")
     
     def update_rnn_stats(self):
         """RNN istatistiklerini güncelle"""

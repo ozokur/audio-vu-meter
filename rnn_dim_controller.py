@@ -11,6 +11,7 @@ import torch.optim as optim
 import numpy as np
 import json
 import os
+import time
 from collections import deque
 from typing import Tuple, List, Optional
 import logging
@@ -37,9 +38,14 @@ class AudioSequenceDataset:
         self.dimmer_sequences.append(dimmer_value / 255.0)  # Normalize to 0-1
         self.timestamps.append(timestamp)
         
+        # Debug: Her 10 sample'da bir log
+        if len(self.audio_sequences) % 10 == 0:
+            print(f"RNN Data: {len(self.audio_sequences)} samples collected")
+        
     def get_sequences(self) -> Tuple[np.ndarray, np.ndarray]:
         """Get training sequences"""
         if len(self.audio_sequences) < self.sequence_length:
+            print(f"Not enough data: {len(self.audio_sequences)} samples, need {self.sequence_length}")
             return np.array([]), np.array([])
             
         # Convert to numpy arrays
@@ -139,7 +145,7 @@ class RNNDimController:
     
     def __init__(self, model_path: str = "rnn_dim_model.pth", 
                  data_path: str = "rnn_training_data.json",
-                 sequence_length: int = 50):
+                 sequence_length: int = 10):  # Reduced from 50 to 10 for faster training
         self.model_path = model_path
         self.data_path = data_path
         self.sequence_length = sequence_length
@@ -236,6 +242,60 @@ class RNNDimController:
         self.is_training = False
         self.save_model()
         logger.info("RNN training completed")
+    
+    def train_model_with_progress(self, epochs: int = 100, batch_size: int = 32, progress_callback=None):
+        """Train the RNN model with progress callback"""
+        X, y = self.dataset.get_sequences()
+        
+        if len(X) == 0:
+            logger.warning("No training data available")
+            return False
+        
+        logger.info(f"Training RNN with {len(X)} sequences")
+        
+        # Convert to tensors
+        X_tensor = torch.FloatTensor(X)
+        y_tensor = torch.FloatTensor(y).unsqueeze(1)
+        
+        # Create data loader
+        dataset = torch.utils.data.TensorDataset(X_tensor, y_tensor)
+        dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True)
+        
+        self.is_training = True
+        self.training_losses = []
+        
+        for epoch in range(epochs):
+            total_loss = 0
+            for batch_X, batch_y in dataloader:
+                self.optimizer.zero_grad()
+                
+                # Forward pass
+                outputs = self.model(batch_X)
+                loss = self.criterion(outputs, batch_y)
+                
+                # Backward pass
+                loss.backward()
+                self.optimizer.step()
+                
+                total_loss += loss.item()
+            
+            avg_loss = total_loss / len(dataloader)
+            self.training_losses.append(avg_loss)
+            
+            # Progress callback
+            if progress_callback:
+                try:
+                    progress_callback(epoch + 1, epochs, avg_loss)
+                except Exception as e:
+                    logger.debug(f"Progress callback error: {e}")
+            
+            if epoch % 10 == 0:
+                logger.info(f"Epoch {epoch}, Loss: {avg_loss:.6f}")
+        
+        self.is_training = False
+        self.save_model()
+        logger.info("RNN training completed")
+        return True
     
     def save_model(self):
         """Save the trained model"""
