@@ -37,7 +37,7 @@ try:
 except ImportError:
     RNN_AVAILABLE = False
 
-__version__ = "1.7.1"
+__version__ = "1.8.0"
 
 # Audio Constants
 AUDIO_FORMAT = pyaudio.paInt16
@@ -229,12 +229,13 @@ UDMX_DEVICES = [
 
 class DMXController:
     """DMX UDMX Controller for Audio-reactive lighting"""
-    def __init__(self, logger_instance=None):
+    def __init__(self, logger_instance=None, app_instance=None):
         self.dmx_data = [0] * 512
         self.usb_device = None
         self.running = False
         self.logger = logger_instance or logger
         self.enabled = False
+        self._app = app_instance  # Reference to main app for beat detection
         
         # RNN Dim Controller
         self.rnn_enabled = False
@@ -367,28 +368,38 @@ class DMXController:
         if self.rnn_controller:
             try:
                 audio_bands = [llow, lmid, lhigh, rlow, rmid, rhigh]
-                current_dimmer = self.dmx_data[5]  # Channel 6 (0-indexed)
-                self.rnn_controller.add_audio_sample(audio_bands, current_dimmer)
+                current_pan = self.dmx_data[0]    # Channel 1 (0-indexed)
+                current_tilt = self.dmx_data[1]   # Channel 2 (0-indexed)
+                current_dimmer = self.dmx_data[5] # Channel 6 (0-indexed)
+                self.rnn_controller.add_audio_sample(audio_bands, current_pan, current_tilt, current_dimmer)
             except Exception as e:
                 self.logger.debug(f"RNN data collection failed: {e}")
         
-        # 🤖 RNN DIM CONTROL: Eğer RNN aktifse, RNN ile dim değerini tahmin et
+        # 🎯 BEAT STATE: Beat detection for Pan/Tilt heuristic
+        beat_state = self.get_beat_state()
+        
+        # 🤖 RNN MULTI-CHANNEL CONTROL: Eğer RNN aktifse, tüm kanalları tahmin et
         if self.rnn_enabled and self.rnn_controller:
             try:
-                # RNN'e ses verilerini gönder ve dim değerini tahmin et
+                # RNN'e ses verilerini gönder ve tüm DMX değerlerini tahmin et
                 audio_bands = [llow, lmid, lhigh, rlow, rmid, rhigh]
-                rnn_dimmer = self.rnn_controller.predict_dimmer(audio_bands)
+                rnn_prediction = self.rnn_controller.predict_dmx_channels(audio_bands)
                 
-                # RNN tahminini kullan
-                base_brightness = rnn_dimmer
-                self.logger.debug(f"RNN predicted dimmer: {rnn_dimmer}")
+                # RNN tahminlerini kullan
+                pan_value = rnn_prediction['pan']
+                tilt_value = rnn_prediction['tilt']
+                base_brightness = rnn_prediction['dimmer']
+                
+                self.logger.debug(f"RNN predicted: Pan={pan_value}, Tilt={tilt_value}, Dimmer={base_brightness}")
                 
             except Exception as e:
                 self.logger.warning(f"RNN prediction failed, falling back to heuristic: {e}")
-                # Fallback to original logic
+                # Fallback to heuristic
+                pan_value, tilt_value = self._calculate_heuristic_pan_tilt(llow, lmid, beat_state)
                 base_brightness = self._calculate_heuristic_dimmer(llow_level, range_config)
         else:
-            # 🎚️ RANGE SCALING: Range light min/max dB'ye göre scale et
+            # 🎚️ HEURISTIC CONTROL: Beat-based Pan/Tilt + Range scaling dimmer
+            pan_value, tilt_value = self._calculate_heuristic_pan_tilt(llow, lmid, beat_state)
             base_brightness = self._calculate_heuristic_dimmer(llow_level, range_config)
         
         # 🔥 BEAT FLASH: Beat anında maksimum parlaklık!
@@ -402,6 +413,12 @@ class DMXController:
             self.set_channel(6, 0)      # Dimmer off
             self.send_frame()
             return
+        
+        # Channel 1: Pan - RNN tahmini veya Beat-based heuristic
+        self.set_channel(1, pan_value)
+        
+        # Channel 2: Tilt - RNN tahmini veya Beat-based heuristic  
+        self.set_channel(2, tilt_value)
         
         # Channel 6: Dimmer - RNN tahmini veya Range Scaling
         self.set_channel(6, base_brightness)
@@ -484,6 +501,61 @@ class DMXController:
         except Exception as e:
             self.logger.error(f"RNN training failed: {e}")
             return False
+    
+    def get_beat_state(self):
+        """Get current beat detection state from VUMeterWidget"""
+        try:
+            # Access VUMeterWidget tempo state through the app
+            if hasattr(self, '_app') and hasattr(self._app, 'vu_widget'):
+                tempo = getattr(self._app.vu_widget, '_tempo', {})
+                now = time.monotonic()
+                
+                llow_state = tempo.get('Llow', {})
+                lmid_state = tempo.get('Lmid', {})
+                
+                llow_beat = now < float(llow_state.get('on_until', 0.0))
+                lmid_beat = now < float(lmid_state.get('on_until', 0.0))
+                
+                return {
+                    'llow_beat': llow_beat,
+                    'lmid_beat': lmid_beat
+                }
+        except Exception as e:
+            self.logger.debug(f"Beat state detection failed: {e}")
+        
+        return {'llow_beat': False, 'lmid_beat': False}
+    
+    def _calculate_heuristic_pan_tilt(self, llow, lmid, beat_state):
+        """Calculate Pan/Tilt values using beat-based heuristic"""
+        pan = 128  # Center default
+        tilt = 128  # Center default
+        
+        try:
+            if beat_state['llow_beat']:
+                # Pan swings on bass beat - sine wave pattern
+                phase = (time.time() % 2.0) / 2.0  # 0-1 cycle over 2 seconds
+                pan = int(128 + 100 * np.sin(phase * 2 * np.pi))
+                pan = max(0, min(255, pan))
+            
+            if beat_state['lmid_beat']:
+                # Tilt steps on mid beat - 3-step pattern
+                step = int((time.time() % 3.0) / 1.0)  # 0, 1, 2
+                tilt = [50, 128, 200][step]
+                tilt = max(0, min(255, tilt))
+            
+            # Add some variation based on audio levels
+            if llow > 0.1:  # If there's bass
+                pan = int(pan + (llow - 0.1) * 50)  # Add some movement
+                pan = max(0, min(255, pan))
+            
+            if lmid > 0.1:  # If there's mid
+                tilt = int(tilt + (lmid - 0.1) * 30)  # Add some movement
+                tilt = max(0, min(255, tilt))
+                
+        except Exception as e:
+            self.logger.debug(f"Pan/Tilt calculation failed: {e}")
+        
+        return pan, tilt
     
     def get_rnn_stats(self):
         """Get RNN training statistics"""
@@ -1151,7 +1223,7 @@ class VUMeterApp(QMainWindow):
         self._last_right = 0.0
         
         # DMX Controller entegrasyonu
-        self.dmx_controller = DMXController(logger_instance=logger)
+        self.dmx_controller = DMXController(logger_instance=logger, app_instance=self)
         
         self._init_ui()
 
@@ -1427,13 +1499,13 @@ class VUMeterApp(QMainWindow):
         # RNN Dim Control Panel
         if RNN_AVAILABLE:
             rnn_frame = QHBoxLayout()
-            rnn_label = QLabel("🤖 RNN Dim Control:")
+            rnn_label = QLabel("🤖 RNN Pan/Tilt/Dim Control:")
             rnn_label.setStyleSheet("font-weight:bold; color:#9C27B0;")
             rnn_frame.addWidget(rnn_label)
             
             # RNN Enable/Disable
             self.rnn_enable_checkbox = QCheckBox("RNN Aktif")
-            self.rnn_enable_checkbox.setToolTip("RNN ile otomatik dimmer kontrolü")
+            self.rnn_enable_checkbox.setToolTip("RNN ile otomatik Pan/Tilt/Dimmer kontrolü")
             self.rnn_enable_checkbox.stateChanged.connect(self.on_rnn_enable_changed)
             rnn_frame.addWidget(self.rnn_enable_checkbox)
             
@@ -1475,12 +1547,12 @@ class VUMeterApp(QMainWindow):
             layout.addLayout(rnn_frame)
             
             # RNN Info
-            rnn_info = QLabel("🧠 RNN: LSTM ile ses verilerinden dimmer değeri tahmin eder. Önce veri topla, sonra eğit!")
+            rnn_info = QLabel("🧠 RNN: LSTM ile ses verilerinden Pan/Tilt/Dimmer değerleri tahmin eder. Beat-based heuristic fallback!")
             rnn_info.setStyleSheet("font-size:9px; color:#9C27B0; font-weight:bold; padding:3px; background-color:#F3E5F5; border-radius:3px;")
             layout.addWidget(rnn_info)
         else:
             # RNN not available
-            rnn_unavailable = QLabel("🤖 RNN Dim Control: PyTorch gerekli (pip install torch)")
+            rnn_unavailable = QLabel("🤖 RNN Pan/Tilt/Dim Control: PyTorch gerekli (pip install torch)")
             rnn_unavailable.setStyleSheet("font-size:9px; color:#999; font-style:italic; padding:3px; background-color:#f5f5f5; border-radius:3px;")
             layout.addWidget(rnn_unavailable)
         
@@ -2136,7 +2208,11 @@ class VUMeterApp(QMainWindow):
                     is_training = stats.get('is_training', False)
                     last_loss = stats.get('last_loss')
                     
-                    self.rnn_stats_label.setText(f"Samples: {samples}")
+                    auto_retrain = getattr(self.dmx_controller.rnn_controller, 'samples_since_last_train', 0)
+                    retrain_interval = getattr(self.dmx_controller.rnn_controller, 'auto_retrain_interval', 100)
+                    remaining = retrain_interval - auto_retrain
+                    
+                    self.rnn_stats_label.setText(f"Samples: {samples} | Auto-retrain in: {remaining}")
                     
                     if is_training:
                         self.rnn_train_btn.setText("Eğitiliyor...")

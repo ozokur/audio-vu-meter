@@ -20,22 +20,25 @@ logger = logging.getLogger("rnn_dim_controller")
 
 
 class AudioSequenceDataset:
-    """Dataset for audio sequence data and dimmer values"""
+    """Dataset for audio sequence data and DMX values (Pan/Tilt/Dimmer)"""
     
     def __init__(self, sequence_length: int = 50, max_samples: int = 10000):
         self.sequence_length = sequence_length
         self.max_samples = max_samples
         self.audio_sequences = deque(maxlen=max_samples)
-        self.dimmer_sequences = deque(maxlen=max_samples)
+        self.dmx_sequences = deque(maxlen=max_samples)  # [pan, tilt, dimmer] values
         self.timestamps = deque(maxlen=max_samples)
         
-    def add_sample(self, audio_bands: List[float], dimmer_value: int, timestamp: float):
-        """Add a new audio-dimmer sample"""
+    def add_sample(self, audio_bands: List[float], dmx_values: List[int], timestamp: float):
+        """Add a new audio-DMX sample (pan, tilt, dimmer)"""
         # Normalize audio bands to 0-1 range
         normalized_bands = [max(0.0, min(1.0, band)) for band in audio_bands]
         
+        # Normalize DMX values to 0-1 range
+        normalized_dmx = [val / 255.0 for val in dmx_values]  # [pan, tilt, dimmer]
+        
         self.audio_sequences.append(normalized_bands)
-        self.dimmer_sequences.append(dimmer_value / 255.0)  # Normalize to 0-1
+        self.dmx_sequences.append(normalized_dmx)
         self.timestamps.append(timestamp)
         
         # Debug: Her 10 sample'da bir log
@@ -50,13 +53,13 @@ class AudioSequenceDataset:
             
         # Convert to numpy arrays
         audio_data = np.array(list(self.audio_sequences))
-        dimmer_data = np.array(list(self.dimmer_sequences))
+        dmx_data = np.array(list(self.dmx_sequences))  # [pan, tilt, dimmer] values
         
         # Create sequences
         X, y = [], []
         for i in range(len(audio_data) - self.sequence_length + 1):
             X.append(audio_data[i:i + self.sequence_length])
-            y.append(dimmer_data[i + self.sequence_length - 1])  # Predict next value
+            y.append(dmx_data[i + self.sequence_length - 1])  # Predict next DMX values
             
         return np.array(X), np.array(y)
     
@@ -64,7 +67,7 @@ class AudioSequenceDataset:
         """Save dataset to file"""
         data = {
             'audio_sequences': list(self.audio_sequences),
-            'dimmer_sequences': list(self.dimmer_sequences),
+            'dmx_sequences': list(self.dmx_sequences),  # [pan, tilt, dimmer] values
             'timestamps': list(self.timestamps),
             'sequence_length': self.sequence_length
         }
@@ -80,22 +83,28 @@ class AudioSequenceDataset:
             data = json.load(f)
             
         self.audio_sequences = deque(data['audio_sequences'], maxlen=self.max_samples)
-        self.dimmer_sequences = deque(data['dimmer_sequences'], maxlen=self.max_samples)
+        # Handle backward compatibility
+        if 'dmx_sequences' in data:
+            self.dmx_sequences = deque(data['dmx_sequences'], maxlen=self.max_samples)
+        else:
+            # Convert old dimmer_sequences to dmx_sequences format
+            old_dimmer = data.get('dimmer_sequences', [])
+            self.dmx_sequences = deque([[0.5, 0.5, d] for d in old_dimmer], maxlen=self.max_samples)
         self.timestamps = deque(data['timestamps'], maxlen=self.max_samples)
         self.sequence_length = data.get('sequence_length', self.sequence_length)
 
 
 class RNN_DimController(nn.Module):
-    """LSTM-based RNN for dimmer control prediction"""
+    """LSTM-based RNN for multi-channel DMX control prediction (Pan/Tilt/Dimmer)"""
     
     def __init__(self, input_size: int = 6, hidden_size: int = 64, num_layers: int = 2, 
-                 dropout: float = 0.2, output_size: int = 1):
+                 dropout: float = 0.2, output_size: int = 3):
         super(RNN_DimController, self).__init__()
         
         self.input_size = input_size  # 6 audio bands (Llow, Lmid, Lhigh, Rlow, Rmid, Rhigh)
         self.hidden_size = hidden_size
         self.num_layers = num_layers
-        self.output_size = output_size
+        self.output_size = output_size  # 3 outputs: Pan, Tilt, Dimmer
         
         # LSTM layers
         self.lstm = nn.LSTM(
@@ -128,8 +137,8 @@ class RNN_DimController(nn.Module):
         
         return x
     
-    def predict_single(self, audio_sequence: np.ndarray) -> float:
-        """Predict dimmer value for a single sequence"""
+    def predict_single(self, audio_sequence: np.ndarray) -> List[float]:
+        """Predict DMX values for a single sequence (Pan, Tilt, Dimmer)"""
         self.eval()
         with torch.no_grad():
             # Convert to tensor and add batch dimension
@@ -137,21 +146,24 @@ class RNN_DimController(nn.Module):
             
             # Predict
             output = self.forward(x)
-            return output.item()
+            return output[0].tolist()  # [pan, tilt, dimmer] normalized 0-1
 
 
 class RNNDimController:
-    """Main RNN-based dimmer controller class"""
+    """Main RNN-based multi-channel DMX controller class"""
     
     def __init__(self, model_path: str = "rnn_dim_model.pth", 
                  data_path: str = "rnn_training_data.json",
-                 sequence_length: int = 10):  # Reduced from 50 to 10 for faster training
+                 sequence_length: int = 10,  # Reduced from 50 to 10 for faster training
+                 auto_retrain_interval: int = 100):
         self.model_path = model_path
         self.data_path = data_path
         self.sequence_length = sequence_length
+        self.auto_retrain_interval = auto_retrain_interval
+        self.samples_since_last_train = 0
         
         # Initialize model
-        self.model = RNN_DimController(input_size=6, hidden_size=64, num_layers=2)
+        self.model = RNN_DimController(input_size=6, hidden_size=64, num_layers=2, output_size=3)
         self.optimizer = optim.Adam(self.model.parameters(), lr=0.001)
         self.criterion = nn.MSELoss()
         
@@ -166,36 +178,53 @@ class RNNDimController:
         self.load_model()
         self.dataset.load_from_file(data_path)
         
-        logger.info(f"RNN Dim Controller initialized (sequence_length={sequence_length})")
+        logger.info(f"RNN Multi-Channel Controller initialized (sequence_length={sequence_length})")
     
-    def add_audio_sample(self, audio_bands: List[float], current_dimmer: int):
+    def add_audio_sample(self, audio_bands: List[float], pan: int, tilt: int, dimmer: int):
         """Add audio sample for training data collection"""
         timestamp = time.time()
-        self.dataset.add_sample(audio_bands, current_dimmer, timestamp)
+        dmx_values = [pan, tilt, dimmer]
+        self.dataset.add_sample(audio_bands, dmx_values, timestamp)
+        
+        # Auto-retrain logic
+        self.samples_since_last_train += 1
+        if self.samples_since_last_train >= self.auto_retrain_interval:
+            logger.info(f"Auto-retraining RNN after {self.samples_since_last_train} samples")
+            self.train_model_silent()
+            self.samples_since_last_train = 0
     
-    def predict_dimmer(self, audio_bands: List[float]) -> int:
-        """Predict optimal dimmer value based on audio bands"""
+    def predict_dmx_channels(self, audio_bands: List[float]) -> dict:
+        """Predict optimal DMX values based on audio bands"""
         if len(self.dataset.audio_sequences) < self.sequence_length:
             # Not enough data, use simple heuristic
-            return self._heuristic_dimmer(audio_bands)
+            return self._heuristic_dmx_channels(audio_bands)
         
         # Get recent audio sequence
         recent_audio = list(self.dataset.audio_sequences)[-self.sequence_length:]
         recent_audio = np.array(recent_audio)
         
         # Predict using RNN
-        predicted_value = self.model.predict_single(recent_audio)
+        predicted_values = self.model.predict_single(recent_audio)  # [pan, tilt, dimmer]
         
         # Convert back to 0-255 range
-        dimmer_value = int(predicted_value * 255)
-        return max(0, min(255, dimmer_value))
+        return {
+            'pan': max(0, min(255, int(predicted_values[0] * 255))),
+            'tilt': max(0, min(255, int(predicted_values[1] * 255))),
+            'dimmer': max(0, min(255, int(predicted_values[2] * 255)))
+        }
     
-    def _heuristic_dimmer(self, audio_bands: List[float]) -> int:
+    def _heuristic_dmx_channels(self, audio_bands: List[float]) -> dict:
         """Fallback heuristic when RNN is not trained"""
-        # Simple heuristic: use Llow + Rlow average
+        # Simple heuristic: use Llow + Rlow average for dimmer
         llow, lmid, lhigh, rlow, rmid, rhigh = audio_bands
         avg_low = (llow + rlow) / 2.0
-        return int(avg_low * 255)
+        avg_mid = (lmid + rmid) / 2.0
+        
+        return {
+            'pan': 128,  # Center position
+            'tilt': 128,  # Center position
+            'dimmer': int(avg_low * 255)
+        }
     
     def train_model(self, epochs: int = 100, batch_size: int = 32):
         """Train the RNN model"""
@@ -295,6 +324,46 @@ class RNNDimController:
         self.is_training = False
         self.save_model()
         logger.info("RNN training completed")
+        return True
+    
+    def train_model_silent(self, epochs: int = 50, batch_size: int = 32):
+        """Silent training for auto-retrain (no progress callback)"""
+        X, y = self.dataset.get_sequences()
+        
+        if len(X) == 0:
+            logger.warning("No training data available for auto-retrain")
+            return False
+        
+        logger.info(f"Silent RNN training with {len(X)} sequences")
+        
+        # Convert to tensors
+        X_tensor = torch.FloatTensor(X)
+        y_tensor = torch.FloatTensor(y)
+        
+        # Create data loader
+        dataset = torch.utils.data.TensorDataset(X_tensor, y_tensor)
+        dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True)
+        
+        self.is_training = True
+        
+        for epoch in range(epochs):
+            total_loss = 0
+            for batch_X, batch_y in dataloader:
+                self.optimizer.zero_grad()
+                
+                # Forward pass
+                outputs = self.model(batch_X)
+                loss = self.criterion(outputs, batch_y)
+                
+                # Backward pass
+                loss.backward()
+                self.optimizer.step()
+                
+                total_loss += loss.item()
+        
+        self.is_training = False
+        self.save_model()
+        logger.info("Silent RNN training completed")
         return True
     
     def save_model(self):
