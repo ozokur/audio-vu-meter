@@ -85,11 +85,18 @@ class AudioSequenceDataset:
         self.audio_sequences = deque(data['audio_sequences'], maxlen=self.max_samples)
         # Handle backward compatibility
         if 'dmx_sequences' in data:
-            self.dmx_sequences = deque(data['dmx_sequences'], maxlen=self.max_samples)
+            dmx_data = data['dmx_sequences']
+            # Check if old 3-channel format and convert to 4-channel
+            if dmx_data and len(dmx_data[0]) == 3:
+                # Convert [pan, tilt, dimmer] to [pan, tilt, color, dimmer]
+                converted_data = [[p, t, 5, d] for p, t, d in dmx_data]  # Default color = 5 (white)
+                self.dmx_sequences = deque(converted_data, maxlen=self.max_samples)
+            else:
+                self.dmx_sequences = deque(dmx_data, maxlen=self.max_samples)
         else:
             # Convert old dimmer_sequences to dmx_sequences format
             old_dimmer = data.get('dimmer_sequences', [])
-            self.dmx_sequences = deque([[0.5, 0.5, d] for d in old_dimmer], maxlen=self.max_samples)
+            self.dmx_sequences = deque([[0.5, 0.5, 0.02, d] for d in old_dimmer], maxlen=self.max_samples)  # [pan, tilt, color, dimmer]
         self.timestamps = deque(data['timestamps'], maxlen=self.max_samples)
         self.sequence_length = data.get('sequence_length', self.sequence_length)
 
@@ -98,13 +105,13 @@ class RNN_DimController(nn.Module):
     """LSTM-based RNN for multi-channel DMX control prediction (Pan/Tilt/Dimmer)"""
     
     def __init__(self, input_size: int = 6, hidden_size: int = 64, num_layers: int = 2, 
-                 dropout: float = 0.2, output_size: int = 3):
+                 dropout: float = 0.2, output_size: int = 4):
         super(RNN_DimController, self).__init__()
         
         self.input_size = input_size  # 6 audio bands (Llow, Lmid, Lhigh, Rlow, Rmid, Rhigh)
         self.hidden_size = hidden_size
         self.num_layers = num_layers
-        self.output_size = output_size  # 3 outputs: Pan, Tilt, Dimmer
+        self.output_size = output_size  # 4 outputs: Pan, Tilt, Color, Dimmer
         
         # LSTM layers
         self.lstm = nn.LSTM(
@@ -138,7 +145,7 @@ class RNN_DimController(nn.Module):
         return x
     
     def predict_single(self, audio_sequence: np.ndarray) -> List[float]:
-        """Predict DMX values for a single sequence (Pan, Tilt, Dimmer)"""
+        """Predict DMX values for a single sequence (Pan, Tilt, Color, Dimmer)"""
         self.eval()
         with torch.no_grad():
             # Convert to tensor and add batch dimension
@@ -146,7 +153,7 @@ class RNN_DimController(nn.Module):
             
             # Predict
             output = self.forward(x)
-            return output[0].tolist()  # [pan, tilt, dimmer] normalized 0-1
+            return output[0].tolist()  # [pan, tilt, color, dimmer] normalized 0-1
 
 
 class RNNDimController:
@@ -163,7 +170,7 @@ class RNNDimController:
         self.samples_since_last_train = 0
         
         # Initialize model
-        self.model = RNN_DimController(input_size=6, hidden_size=64, num_layers=2, output_size=3)
+        self.model = RNN_DimController(input_size=6, hidden_size=64, num_layers=2, output_size=4)
         self.optimizer = optim.Adam(self.model.parameters(), lr=0.001)
         self.criterion = nn.MSELoss()
         
@@ -180,10 +187,10 @@ class RNNDimController:
         
         logger.info(f"RNN Multi-Channel Controller initialized (sequence_length={sequence_length})")
     
-    def add_audio_sample(self, audio_bands: List[float], pan: int, tilt: int, dimmer: int):
+    def add_audio_sample(self, audio_bands: List[float], pan: int, tilt: int, color: int, dimmer: int):
         """Add audio sample for training data collection"""
         timestamp = time.time()
-        dmx_values = [pan, tilt, dimmer]
+        dmx_values = [pan, tilt, color, dimmer]
         self.dataset.add_sample(audio_bands, dmx_values, timestamp)
         
         # Auto-retrain logic
@@ -210,7 +217,8 @@ class RNNDimController:
         return {
             'pan': max(0, min(255, int(predicted_values[0] * 255))),
             'tilt': max(0, min(255, int(predicted_values[1] * 255))),
-            'dimmer': max(0, min(255, int(predicted_values[2] * 255)))
+            'color': max(0, min(255, int(predicted_values[2] * 255))),
+            'dimmer': max(0, min(255, int(predicted_values[3] * 255)))
         }
     
     def _heuristic_dmx_channels(self, audio_bands: List[float]) -> dict:
@@ -219,10 +227,22 @@ class RNNDimController:
         llow, lmid, lhigh, rlow, rmid, rhigh = audio_bands
         avg_low = (llow + rlow) / 2.0
         avg_mid = (lmid + rmid) / 2.0
+        avg_high = (lhigh + rhigh) / 2.0
+        
+        # Color selection based on frequency
+        if avg_high > 0.5:  # High freq -> Blue/Cyan
+            color = 70  # Cyan
+        elif avg_mid > 0.5:  # Mid freq -> Green/Yellow
+            color = 35  # Yellow
+        elif avg_low > 0.5:  # Low freq -> Red/Orange
+            color = 15  # Red
+        else:
+            color = 5  # White (default)
         
         return {
             'pan': 128,  # Center position
             'tilt': 128,  # Center position
+            'color': color,
             'dimmer': int(avg_low * 255)
         }
     

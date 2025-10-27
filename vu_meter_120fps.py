@@ -370,8 +370,9 @@ class DMXController:
                 audio_bands = [llow, lmid, lhigh, rlow, rmid, rhigh]
                 current_pan = self.dmx_data[0]    # Channel 1 (0-indexed)
                 current_tilt = self.dmx_data[1]   # Channel 2 (0-indexed)
+                current_color = self.dmx_data[2]  # Channel 3 (0-indexed)
                 current_dimmer = self.dmx_data[5] # Channel 6 (0-indexed)
-                self.rnn_controller.add_audio_sample(audio_bands, current_pan, current_tilt, current_dimmer)
+                self.rnn_controller.add_audio_sample(audio_bands, current_pan, current_tilt, current_color, current_dimmer)
             except Exception as e:
                 self.logger.debug(f"RNN data collection failed: {e}")
         
@@ -388,18 +389,21 @@ class DMXController:
                 # RNN tahminlerini kullan
                 pan_value = rnn_prediction['pan']
                 tilt_value = rnn_prediction['tilt']
+                color_value = rnn_prediction['color']
                 base_brightness = rnn_prediction['dimmer']
                 
-                self.logger.debug(f"RNN predicted: Pan={pan_value}, Tilt={tilt_value}, Dimmer={base_brightness}")
+                self.logger.debug(f"RNN predicted: Pan={pan_value}, Tilt={tilt_value}, Color={color_value}, Dimmer={base_brightness}")
                 
             except Exception as e:
                 self.logger.warning(f"RNN prediction failed, falling back to heuristic: {e}")
                 # Fallback to heuristic
                 pan_value, tilt_value = self._calculate_heuristic_pan_tilt(llow, lmid, beat_state)
+                color_value = self._calculate_heuristic_color(llow, lmid, lhigh)
                 base_brightness = self._calculate_heuristic_dimmer(llow_level, range_config)
         else:
-            # 🎚️ HEURISTIC CONTROL: Beat-based Pan/Tilt + Range scaling dimmer
+            # 🎚️ HEURISTIC CONTROL: Beat-based Pan/Tilt + Color + Range scaling dimmer
             pan_value, tilt_value = self._calculate_heuristic_pan_tilt(llow, lmid, beat_state)
+            color_value = self._calculate_heuristic_color(llow, lmid, lhigh)
             base_brightness = self._calculate_heuristic_dimmer(llow_level, range_config)
         
         # 🔥 BEAT FLASH: Beat anında maksimum parlaklık!
@@ -420,11 +424,11 @@ class DMXController:
         # Channel 2: Tilt - RNN tahmini veya Beat-based heuristic  
         self.set_channel(2, tilt_value)
         
+        # Channel 3: Color - RNN tahmini veya Frequency-based heuristic
+        self.set_channel(3, color_value)
+        
         # Channel 6: Dimmer - RNN tahmini veya Range Scaling
         self.set_channel(6, base_brightness)
-        
-        # Channel 3: Renk - MANUEL KONTROL (GUI'den ayarlanır)
-        # Bu kanal artık otomatik değişmez, sadece GUI'den set edilir
         
         # Channel 5: Master Dimmer - MANUEL KONTROL (GUI'den ayarlanır)
         # Bu kanal artık otomatik değişmez, sadece GUI'den set edilir
@@ -538,9 +542,9 @@ class DMXController:
                 pan = max(0, min(255, pan))
             
             if beat_state['lmid_beat']:
-                # Tilt steps on mid beat - 3-step pattern
+                # Tilt steps on mid beat - 3-step pattern with wider range
                 step = int((time.time() % 3.0) / 1.0)  # 0, 1, 2
-                tilt = [50, 128, 200][step]
+                tilt = [20, 128, 235][step]  # Wider range: 20-235 instead of 50-200
                 tilt = max(0, min(255, tilt))
             
             # Add some variation based on audio levels
@@ -548,14 +552,30 @@ class DMXController:
                 pan = int(pan + (llow - 0.1) * 50)  # Add some movement
                 pan = max(0, min(255, pan))
             
-            if lmid > 0.1:  # If there's mid
-                tilt = int(tilt + (lmid - 0.1) * 30)  # Add some movement
+            if lmid > 0.1:  # If there's mid - stronger modulation
+                tilt = int(tilt + (lmid - 0.1) * 80)  # Increased from 30 to 80
                 tilt = max(0, min(255, tilt))
                 
         except Exception as e:
             self.logger.debug(f"Pan/Tilt calculation failed: {e}")
         
         return pan, tilt
+    
+    def _calculate_heuristic_color(self, llow, lmid, lhigh):
+        """Calculate color value based on frequency bands"""
+        try:
+            # Map frequency bands to colors
+            if lhigh > 0.5:  # High freq -> Blue/Cyan
+                return 70  # Cyan
+            elif lmid > 0.5:  # Mid freq -> Green/Yellow
+                return 35  # Yellow
+            elif llow > 0.5:  # Low freq -> Red/Orange
+                return 15  # Red
+            else:
+                return 5  # White (default)
+        except Exception as e:
+            self.logger.debug(f"Color calculation failed: {e}")
+            return 5  # White default
     
     def get_rnn_stats(self):
         """Get RNN training statistics"""
@@ -1499,13 +1519,13 @@ class VUMeterApp(QMainWindow):
         # RNN Dim Control Panel
         if RNN_AVAILABLE:
             rnn_frame = QHBoxLayout()
-            rnn_label = QLabel("🤖 RNN Pan/Tilt/Dim Control:")
+            rnn_label = QLabel("🤖 RNN Pan/Tilt/Color/Dim Control:")
             rnn_label.setStyleSheet("font-weight:bold; color:#9C27B0;")
             rnn_frame.addWidget(rnn_label)
             
             # RNN Enable/Disable
             self.rnn_enable_checkbox = QCheckBox("RNN Aktif")
-            self.rnn_enable_checkbox.setToolTip("RNN ile otomatik Pan/Tilt/Dimmer kontrolü")
+            self.rnn_enable_checkbox.setToolTip("RNN ile otomatik Pan/Tilt/Color/Dimmer kontrolü")
             self.rnn_enable_checkbox.stateChanged.connect(self.on_rnn_enable_changed)
             rnn_frame.addWidget(self.rnn_enable_checkbox)
             
@@ -1547,12 +1567,12 @@ class VUMeterApp(QMainWindow):
             layout.addLayout(rnn_frame)
             
             # RNN Info
-            rnn_info = QLabel("🧠 RNN: LSTM ile ses verilerinden Pan/Tilt/Dimmer değerleri tahmin eder. Beat-based heuristic fallback!")
+            rnn_info = QLabel("🧠 RNN: LSTM ile ses verilerinden Pan/Tilt/Color/Dimmer değerleri tahmin eder. Auto-retrain active!")
             rnn_info.setStyleSheet("font-size:9px; color:#9C27B0; font-weight:bold; padding:3px; background-color:#F3E5F5; border-radius:3px;")
             layout.addWidget(rnn_info)
         else:
             # RNN not available
-            rnn_unavailable = QLabel("🤖 RNN Pan/Tilt/Dim Control: PyTorch gerekli (pip install torch)")
+            rnn_unavailable = QLabel("🤖 RNN Pan/Tilt/Color/Dim Control: PyTorch gerekli (pip install torch)")
             rnn_unavailable.setStyleSheet("font-size:9px; color:#999; font-style:italic; padding:3px; background-color:#f5f5f5; border-radius:3px;")
             layout.addWidget(rnn_unavailable)
         
@@ -2212,7 +2232,22 @@ class VUMeterApp(QMainWindow):
                     retrain_interval = getattr(self.dmx_controller.rnn_controller, 'auto_retrain_interval', 100)
                     remaining = retrain_interval - auto_retrain
                     
-                    self.rnn_stats_label.setText(f"Samples: {samples} | Auto-retrain in: {remaining}")
+                    # Check if auto-retrain is running
+                    is_auto_training = getattr(self.dmx_controller.rnn_controller, 'is_training', False)
+                    
+                    if is_auto_training:
+                        self.rnn_stats_label.setText(f"Samples: {samples} | 🔄 Auto-Training...")
+                        self.rnn_status_label.setText("RNN: 🔄 Auto-Training...")
+                        self.rnn_status_label.setStyleSheet("color:orange; font-weight:bold;")
+                    else:
+                        self.rnn_stats_label.setText(f"Samples: {samples} | Auto-retrain in: {remaining}")
+                        # Update RNN status based on enabled state
+                        if hasattr(self, 'rnn_enable_checkbox') and self.rnn_enable_checkbox.isChecked():
+                            self.rnn_status_label.setText("RNN: Aktif")
+                            self.rnn_status_label.setStyleSheet("color:green; font-weight:bold;")
+                        else:
+                            self.rnn_status_label.setText("RNN: Kapalı")
+                            self.rnn_status_label.setStyleSheet("color:red; font-weight:bold;")
                     
                     if is_training:
                         self.rnn_train_btn.setText("Eğitiliyor...")
