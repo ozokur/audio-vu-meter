@@ -11,6 +11,7 @@ from logging.handlers import RotatingFileHandler
 import numpy as np
 import time
 import json
+import subprocess
 try:
     import pyaudiowpatch as pyaudio
 except ImportError:
@@ -19,7 +20,7 @@ from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout,
     QHBoxLayout, QPushButton, QLabel, QComboBox, QProgressBar, QDoubleSpinBox, QCheckBox, QGridLayout, QSpinBox
 )
-from PyQt5.QtCore import QTimer, pyqtSignal, QObject
+from PyQt5.QtCore import QTimer, pyqtSignal, QObject, QThread, Qt
 
 # DMX USB kontrolü için
 try:
@@ -34,8 +35,11 @@ try:
     import torch
     from rnn_dim_controller import initialize_rnn_controller, get_rnn_controller
     RNN_AVAILABLE = True
-except ImportError:
+    print("RNN: PyTorch available, RNN features enabled")
+except ImportError as e:
     RNN_AVAILABLE = False
+    print(f"RNN: PyTorch not available: {e}")
+    print("RNN: Install PyTorch with: pip install torch")
 
 __version__ = "1.8.0"
 
@@ -240,26 +244,42 @@ class DMXController:
         # RNN Dim Controller
         self.rnn_enabled = False
         self.rnn_controller = None
+        self.training_in_progress = False  # Eğitim durumu flag'i
+        self.sample_collection_active = False  # Sample toplama durumu
         if RNN_AVAILABLE:
             try:
+                print("RNN: Initializing RNN Controller...")
                 self.rnn_controller = initialize_rnn_controller()
+                print("RNN: Controller initialized successfully!")
                 self.logger.info("RNN Dim Controller initialized")
             except Exception as e:
+                print(f"RNN: Controller initialization failed: {e}")
                 self.logger.warning(f"RNN Dim Controller initialization failed: {e}")
                 self.rnn_controller = None
         
-        # Color mapping for audio bands (Channel 3 values)
-        # 0-9: White, 10+: Colors (Red, Yellow, Green, Cyan, Blue, Magenta, etc.)
+        # Enhanced color mapping for audio bands (Channel 3 values)
+        # More detailed color ranges for better music sensitivity
         self.color_map = {
             'white': 5,      # 0-9 range
             'red': 15,       # Kırmızı
             'orange': 25,    # Turuncu
             'yellow': 35,    # Sarı
-            'green': 50,     # Yeşil
-            'cyan': 70,      # Camgöbeği
-            'blue': 90,      # Mavi
-            'purple': 110,   # Mor
-            'magenta': 120,  # Magenta
+            'lime': 45,      # Açık yeşil
+            'green': 55,     # Yeşil
+            'teal': 65,      # Teal
+            'cyan': 75,      # Camgöbeği
+            'sky_blue': 85,  # Gökyüzü mavisi
+            'blue': 95,      # Mavi
+            'indigo': 105,   # İndigo
+            'purple': 115,   # Mor
+            'violet': 125,   # Menekşe
+            'magenta': 135,  # Magenta
+            'pink': 145,     # Pembe
+            'rose': 155,     # Gül rengi
+            'amber': 165,    # Kehribar
+            'gold': 175,     # Altın
+            'silver': 185,   # Gümüş
+            'copper': 195,   # Bakır
         }
         
         if DMX_AVAILABLE:
@@ -358,36 +378,89 @@ class DMXController:
     
     def set_audio_reactive(self, llow, lmid, lhigh, rlow, rmid, rhigh, light_states=None, beat_flash=False, range_config=None):
         """Set DMX values based on audio band levels - Llow mode with beat flash and range scaling"""
-        if not self.enabled:
+        # Sample collection sırasında da DMX değerleri hesaplanmalı
+        # DMX bağlantısı yoksa sadece sample collection için çalış
+        if not self.enabled and not self.sample_collection_active:
             return
         
         # 🎵 Llow seviyesini hesapla (L ve R kanallarının ortalaması)
         llow_level = (llow + rlow) / 2.0
         
-        # 📊 VERİ TOPLAMA: RNN controller varsa her zaman veri topla
-        if self.rnn_controller:
+        # 📊 VERİ TOPLAMA: RNN controller varsa ve sample collection aktifse veri topla
+        # 🎵 BEAT INTENSITY & COLOR MODE FOCUS: Eğitim beat intensity ve color mode'a odaklanır
+        if self.rnn_controller and self.sample_collection_active:
             try:
-                audio_bands = [llow, lmid, lhigh, rlow, rmid, rhigh]
+                # Beat intensity hesapla - daha agresif
+                beat_intensity = (llow + lmid + rlow + rmid) / 2.0  # 2x daha güçlü
+                # Ek beat boost - tüm frekanslar
+                total_beat = (llow + lmid + lhigh + rlow + rmid + rhigh) / 6.0
+                beat_intensity = max(beat_intensity, total_beat * 1.5)  # En yüksek değeri al
+                
+                # Color mode bilgisini al
+                color_mode = 0  # Default: Frequency-based
+                if hasattr(self, '_app') and hasattr(self._app, 'color_mode_combo'):
+                    color_mode = self._app.color_mode_combo.currentIndex()  # 0=Frequency, 1=Smart Random
+                
+                # Genişletilmiş audio features: [llow, lmid, lhigh, rlow, rmid, rhigh, beat_intensity, color_mode]
+                audio_bands = [llow, lmid, lhigh, rlow, rmid, rhigh, beat_intensity, color_mode]
                 current_pan = self.dmx_data[0]    # Channel 1 (0-indexed)
                 current_tilt = self.dmx_data[1]   # Channel 2 (0-indexed)
                 current_color = self.dmx_data[2]  # Channel 3 (0-indexed)
                 current_dimmer = self.dmx_data[5] # Channel 6 (0-indexed)
                 self.rnn_controller.add_audio_sample(audio_bands, current_pan, current_tilt, current_color, current_dimmer)
-                # Debug: Her 50 sample'da bir log
-                if len(self.rnn_controller.dataset.audio_sequences) % 50 == 0:
-                    print(f"DEBUG: RNN samples collected: {len(self.rnn_controller.dataset.audio_sequences)}")
+                
+                # Sample sayısını kontrol et ve hedefe ulaştıysa dur
+                samples_count = len(self.rnn_controller.dataset.audio_sequences)
+                target_samples = 1200  # Default value
+                if hasattr(self, '_app') and self._app and hasattr(self._app, 'sample_size_spinbox'):
+                    target_samples = self._app.sample_size_spinbox.value()
+                
+                # UI'yi güncelle (app instance üzerinden)
+                if hasattr(self, '_app') and self._app and hasattr(self._app, 'sample_collect_btn'):
+                    self._app.sample_collect_btn.setText(f"Sample Topla ({samples_count}/{target_samples})")
+                
+                # Hedef sample'a ulaştıysa otomatik dur
+                if samples_count >= target_samples:
+                    self.sample_collection_active = False
+                    if hasattr(self, '_app') and self._app:
+                        if hasattr(self._app, 'sample_collect_btn'):
+                            self._app.sample_collect_btn.setText(f"Sample Topla ({target_samples}/{target_samples})")
+                            self._app.sample_collect_btn.setStyleSheet("background-color:#4CAF50; color:white; padding:3px;")
+                        if hasattr(self._app, 'rnn_train_btn'):
+                            self._app.rnn_train_btn.setEnabled(True)  # Enable training button
+                        
+                        # Otomatik eğitim aktifse eğitimi başlat
+                        if hasattr(self._app, 'auto_training_checkbox') and self._app.auto_training_checkbox.isChecked():
+                            print("🤖 Otomatik eğitim başlatılıyor...")
+                            self._app.train_rnn_model()
+                        else:
+                            print("✅ 1200 samples collected! Training button enabled.")
+                    logger.info("Sample collection completed - 1200 samples collected")
             except Exception as e:
-                print(f"DEBUG: RNN data collection failed: {e}")
                 self.logger.debug(f"RNN data collection failed: {e}")
         
         # 🎯 BEAT STATE: Beat detection for Pan/Tilt heuristic
         beat_state = self.get_beat_state()
         
+        
         # 🤖 RNN MULTI-CHANNEL CONTROL: Eğer RNN aktifse, tüm kanalları tahmin et
-        if self.rnn_enabled and self.rnn_controller:
+        # 🎵 BEAT INTENSITY & COLOR MODE FOCUS: RNN beat intensity ve color mode'a odaklanır
+        if self.rnn_enabled and self.rnn_controller and self.enabled:  # RNN tekrar aktif
+            # Debug disabled
             try:
-                # RNN'e ses verilerini gönder ve tüm DMX değerlerini tahmin et
-                audio_bands = [llow, lmid, lhigh, rlow, rmid, rhigh]
+                # Beat intensity hesapla - daha agresif
+                beat_intensity = (llow + lmid + rlow + rmid) / 2.0  # 2x daha güçlü
+                # Ek beat boost - tüm frekanslar
+                total_beat = (llow + lmid + lhigh + rlow + rmid + rhigh) / 6.0
+                beat_intensity = max(beat_intensity, total_beat * 1.5)  # En yüksek değeri al
+                
+                # Color mode bilgisini al
+                color_mode = 0  # Default: Frequency-based
+                if hasattr(self, '_app') and hasattr(self._app, 'color_mode_combo'):
+                    color_mode = self._app.color_mode_combo.currentIndex()  # 0=Frequency, 1=Smart Random
+                
+                # Genişletilmiş audio features: [llow, lmid, lhigh, rlow, rmid, rhigh, beat_intensity, color_mode]
+                audio_bands = [llow, lmid, lhigh, rlow, rmid, rhigh, beat_intensity, color_mode]
                 rnn_prediction = self.rnn_controller.predict_dmx_channels(audio_bands)
                 
                 # RNN tahminlerini kullan
@@ -396,18 +469,21 @@ class DMXController:
                 color_value = rnn_prediction['color']
                 base_brightness = rnn_prediction['dimmer']
                 
+                print(f"🎯 RNN DMX: Pan={pan_value}, Tilt={tilt_value}, Color={color_value}, Dimmer={base_brightness}")
                 self.logger.debug(f"RNN predicted: Pan={pan_value}, Tilt={tilt_value}, Color={color_value}, Dimmer={base_brightness}")
                 
             except Exception as e:
+                print(f"❌ RNN prediction failed, falling back to heuristic: {e}")
                 self.logger.warning(f"RNN prediction failed, falling back to heuristic: {e}")
                 # Fallback to heuristic
                 pan_value, tilt_value = self._calculate_heuristic_pan_tilt(llow, lmid, beat_state)
-                color_value = self._calculate_heuristic_color(llow, lmid, lhigh)
+                color_value = self._calculate_color_by_mode(llow, lmid, lhigh)
                 base_brightness = self._calculate_heuristic_dimmer(llow_level, range_config)
         else:
             # 🎚️ HEURISTIC CONTROL: Beat-based Pan/Tilt + Color + Range scaling dimmer
+            # Debug disabled
             pan_value, tilt_value = self._calculate_heuristic_pan_tilt(llow, lmid, beat_state)
-            color_value = self._calculate_heuristic_color(llow, lmid, lhigh)
+            color_value = self._calculate_color_by_mode(llow, lmid, lhigh)
             base_brightness = self._calculate_heuristic_dimmer(llow_level, range_config)
         
         # 🔥 BEAT FLASH: Beat anında maksimum parlaklık!
@@ -476,7 +552,7 @@ class DMXController:
         else:
             self.logger.info("RNN Dimmer Control disabled")
     
-    def train_rnn_model(self, epochs: int = 100):
+    def train_rnn_model(self, epochs: int = 20):
         """Train the RNN model with collected data"""
         if not self.rnn_controller:
             self.logger.error("RNN Controller not available")
@@ -491,7 +567,7 @@ class DMXController:
             self.logger.error(f"RNN training failed: {e}")
             return False
     
-    def train_rnn_model_with_progress(self, epochs: int = 100, progress_callback=None):
+    def train_rnn_model_with_progress(self, epochs: int = 20, progress_callback=None):
         """Train the RNN model with progress callback"""
         if not self.rnn_controller:
             self.logger.error("RNN Controller not available")
@@ -534,30 +610,68 @@ class DMXController:
         return {'llow_beat': False, 'lmid_beat': False}
     
     def _calculate_heuristic_pan_tilt(self, llow, lmid, beat_state):
-        """Calculate Pan/Tilt values using beat-based heuristic"""
+        """Calculate Pan/Tilt values using enhanced music-sensitive heuristic"""
         pan = 128  # Center default
         tilt = 128  # Center default
         
         try:
-            if beat_state['llow_beat']:
-                # Pan swings on bass beat - sine wave pattern
-                phase = (time.time() % 2.0) / 2.0  # 0-1 cycle over 2 seconds
-                pan = int(128 + 100 * np.sin(phase * 2 * np.pi))
+            # Calculate overall intensity for more dynamic movement
+            intensity = (llow + lmid) / 2.0
+            intensity = max(0.0, min(1.0, intensity))
+            
+            # Bass-driven Pan movement with more complexity
+            if beat_state['llow_beat'] or llow > 0.2:
+                # Multiple sine waves for more complex movement
+                time_factor = time.time()
+                
+                # Primary bass wave (slower, wider)
+                phase1 = (time_factor % 3.0) / 3.0  # 3-second cycle
+                wave1 = np.sin(phase1 * 2 * np.pi) * (0.5 + llow * 0.5)  # Amplitude based on bass
+                
+                # Secondary wave (faster, smaller)
+                phase2 = (time_factor % 1.5) / 1.5  # 1.5-second cycle
+                wave2 = np.sin(phase2 * 4 * np.pi) * 0.3  # Higher frequency
+                
+                # Combine waves for complex movement
+                pan = int(128 + (wave1 + wave2) * 80)
                 pan = max(0, min(255, pan))
             
-            if beat_state['lmid_beat']:
-                # Tilt steps on mid beat - 3-step pattern with wider range
-                step = int((time.time() % 3.0) / 1.0)  # 0, 1, 2
-                tilt = [20, 128, 235][step]  # Wider range: 20-235 instead of 50-200
+            # Mid-driven Tilt movement with more variation
+            if beat_state['lmid_beat'] or lmid > 0.2:
+                time_factor = time.time()
+                
+                # Multi-step tilt pattern with intensity-based variation
+                if lmid > 0.7:  # Strong mid - dramatic movement
+                    step = int((time_factor % 2.0) / 0.5)  # 4 steps over 2 seconds
+                    tilt = [30, 100, 200, 128][step % 4]
+                elif lmid > 0.4:  # Medium mid - moderate movement
+                    step = int((time_factor % 3.0) / 1.0)  # 3 steps over 3 seconds
+                    tilt = [50, 128, 200][step % 3]
+                else:  # Light mid - subtle movement
+                    step = int((time_factor % 4.0) / 1.0)  # 4 steps over 4 seconds
+                    tilt = [80, 110, 150, 128][step % 4]
+                
                 tilt = max(0, min(255, tilt))
             
-            # Add some variation based on audio levels
-            if llow > 0.1:  # If there's bass
-                pan = int(pan + (llow - 0.1) * 50)  # Add some movement
+            # Add continuous micro-movements based on audio levels
+            if llow > 0.05:  # Even low bass adds movement
+                # Subtle pan variation based on bass intensity
+                micro_pan = int((llow - 0.05) * 30 * np.sin(time.time() * 8))  # Fast micro-movement
+                pan = int(pan + micro_pan)
                 pan = max(0, min(255, pan))
             
-            if lmid > 0.1:  # If there's mid - stronger modulation
-                tilt = int(tilt + (lmid - 0.1) * 80)  # Increased from 30 to 80
+            if lmid > 0.05:  # Even low mid adds movement
+                # Subtle tilt variation based on mid intensity
+                micro_tilt = int((lmid - 0.05) * 25 * np.cos(time.time() * 6))  # Fast micro-movement
+                tilt = int(tilt + micro_tilt)
+                tilt = max(0, min(255, tilt))
+            
+            # Add some randomness for more organic movement (small amount)
+            import random
+            if intensity > 0.3:  # Only when there's significant audio
+                pan += random.randint(-5, 5)
+                tilt += random.randint(-5, 5)
+                pan = max(0, min(255, pan))
                 tilt = max(0, min(255, tilt))
                 
         except Exception as e:
@@ -566,20 +680,141 @@ class DMXController:
         return pan, tilt
     
     def _calculate_heuristic_color(self, llow, lmid, lhigh):
-        """Calculate color value based on frequency bands"""
+        """Calculate color value based on frequency bands with enhanced music sensitivity"""
         try:
-            # Map frequency bands to colors
-            if lhigh > 0.5:  # High freq -> Blue/Cyan
-                return 70  # Cyan
-            elif lmid > 0.5:  # Mid freq -> Green/Yellow
-                return 35  # Yellow
-            elif llow > 0.5:  # Low freq -> Red/Orange
-                return 15  # Red
+            # Normalize frequency values to 0-1 range
+            llow_norm = max(0.0, min(1.0, llow))
+            lmid_norm = max(0.0, min(1.0, lmid))
+            lhigh_norm = max(0.0, min(1.0, lhigh))
+            
+            # Calculate weighted intensity for more sensitivity
+            # Give more weight to mid and high frequencies for better color variation
+            weighted_intensity = (llow_norm * 0.3) + (lmid_norm * 0.4) + (lhigh_norm * 0.3)
+            
+            # Find the dominant frequency band with threshold
+            max_band = max(llow_norm, lmid_norm, lhigh_norm)
+            second_band = sorted([llow_norm, lmid_norm, lhigh_norm])[1]
+            
+            # Very low intensity - subtle white/amber
+            if max_band < 0.05:
+                return 5  # White
+            elif max_band < 0.15:
+                return 165  # Amber for low intensity
+            
+            # Bass dominant - Red to Orange range with more variation
+            elif llow_norm == max_band:
+                if llow_norm > 0.8:  # Very strong bass
+                    return 15  # Red
+                elif llow_norm > 0.6:  # Strong bass
+                    return 25  # Orange
+                else:  # Medium bass
+                    return 35  # Yellow
+            
+            # Mid dominant - More detailed color range for mid frequencies
+            elif lmid_norm == max_band:
+                if lmid_norm > 0.9:  # Very strong mid
+                    return 55  # Green
+                elif lmid_norm > 0.7:  # Strong mid
+                    return 65  # Teal
+                elif lmid_norm > 0.5:  # Medium mid
+                    return 75  # Cyan
+                else:  # Light mid
+                    return 85  # Sky blue
+            
+            # High dominant - Rich color range for high frequencies
             else:
-                return 5  # White (default)
+                if lhigh_norm > 0.9:  # Very strong high
+                    return 125  # Violet
+                elif lhigh_norm > 0.7:  # Strong high
+                    return 135  # Magenta
+                elif lhigh_norm > 0.5:  # Medium high
+                    return 145  # Pink
+                else:  # Light high
+                    return 95  # Blue
+            
         except Exception as e:
             self.logger.debug(f"Color calculation failed: {e}")
             return 5  # White default
+    
+    def _calculate_smart_random_color(self, llow, lmid, lhigh):
+        """Calculate color value using smart random mode based on intensity"""
+        try:
+            import random
+            
+            # Calculate overall intensity (0-1)
+            intensity = (llow + lmid + lhigh) / 3.0
+            intensity = max(0.0, min(1.0, intensity))
+            
+            # Initialize last color tracking if not exists
+            if not hasattr(self, '_last_color'):
+                self._last_color = 5
+                self._color_change_counter = 0
+            
+            # Change color every few frames to avoid rapid flickering
+            self._color_change_counter += 1
+            should_change = self._color_change_counter >= 10  # Change every 10 frames (~0.17s at 60fps)
+            
+            if not should_change:
+                return self._last_color
+            
+            # Reset counter
+            self._color_change_counter = 0
+            
+            # Select color range based on intensity
+            if intensity > 0.7:  # High intensity - Warm/energetic colors
+                color_ranges = [
+                    (0, 20),    # Red
+                    (21, 40),   # Orange  
+                    (121, 140)  # Purple
+                ]
+            elif intensity > 0.4:  # Medium intensity - Balanced colors
+                color_ranges = [
+                    (41, 60),   # Yellow
+                    (61, 80),   # Green
+                    (81, 100)   # Cyan
+                ]
+            else:  # Low intensity - Cool/calm colors
+                color_ranges = [
+                    (101, 120), # Blue
+                    (81, 100),  # Light Blue/Cyan
+                    (5, 15)     # White/Light
+                ]
+            
+            # Select random range and random color within that range
+            selected_range = random.choice(color_ranges)
+            color_value = random.randint(selected_range[0], selected_range[1])
+            
+            # Avoid same color as last time
+            if color_value == self._last_color and len(color_ranges) > 1:
+                # Try again with different range
+                other_ranges = [r for r in color_ranges if r != selected_range]
+                if other_ranges:
+                    selected_range = random.choice(other_ranges)
+                    color_value = random.randint(selected_range[0], selected_range[1])
+            
+            self._last_color = color_value
+            return color_value
+            
+        except Exception as e:
+            self.logger.debug(f"Smart random color calculation failed: {e}")
+            return 5  # White default
+    
+    def _calculate_color_by_mode(self, llow, lmid, lhigh):
+        """Calculate color value based on selected mode"""
+        try:
+            # Check if we have access to the app instance and color mode combo
+            if hasattr(self, '_app') and hasattr(self._app, 'color_mode_combo'):
+                mode = self._app.color_mode_combo.currentData()
+                if mode == "smart_random":
+                    return self._calculate_smart_random_color(llow, lmid, lhigh)
+                else:  # frequency or default
+                    return self._calculate_heuristic_color(llow, lmid, lhigh)
+            else:
+                # Fallback to frequency-based if UI not available
+                return self._calculate_heuristic_color(llow, lmid, lhigh)
+        except Exception as e:
+            self.logger.debug(f"Color mode calculation failed: {e}")
+            return self._calculate_heuristic_color(llow, lmid, lhigh)
     
     def get_rnn_stats(self):
         """Get RNN training statistics"""
@@ -1239,12 +1474,52 @@ class VUMeterWidget(QWidget):
         lab.setStyleSheet(f"border-radius:7px; background-color:{col}; border:1px solid #333;")
 
 
+class RNNTrainingProcess(QThread):
+    """RNN eğitimi için ayrı process"""
+    training_finished = pyqtSignal(bool, str)  # success, message
+    
+    def __init__(self, epochs, data_file="rnn_training_data.json"):
+        super().__init__()
+        self.epochs = epochs
+        self.data_file = data_file
+        
+    def run(self):
+        try:
+            # Ayrı process'te eğitim script'ini çalıştır
+            cmd = [
+                sys.executable, 
+                "train_rnn.py", 
+                "--epochs", str(self.epochs),
+                "--data", self.data_file,
+                "--model", "rnn_dim_model.pth"
+            ]
+            
+            print(f"Eğitim başlatılıyor: {' '.join(cmd)}")
+            
+            # Process'i çalıştır
+            result = subprocess.run(cmd, capture_output=True, text=True, cwd=os.getcwd())
+            
+            # Sonucu kontrol et
+            if result.returncode == 0:
+                self.training_finished.emit(True, "Eğitim tamamlandı!")
+            else:
+                error_msg = result.stderr.strip() if result.stderr else "Bilinmeyen hata"
+                print(f"Eğitim script hatası: {error_msg}")
+                print(f"Eğitim script stdout: {result.stdout}")
+                self.training_finished.emit(False, f"Script hatası: {error_msg}")
+                
+        except Exception as e:
+            print(f"Process exception: {e}")
+            self.training_finished.emit(False, f"Process hatası: {e}")
+
+
 class VUMeterApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.audio_monitor = AudioMonitor()
         self._last_left = 0.0
         self._last_right = 0.0
+        self.training_thread = None
         
         # DMX Controller entegrasyonu
         self.dmx_controller = DMXController(logger_instance=logger, app_instance=self)
@@ -1482,6 +1757,23 @@ class VUMeterApp(QMainWindow):
         dmx_color_frame.addStretch()
         layout.addLayout(dmx_color_frame)
         
+        # Renk Modu Seçimi
+        dmx_color_mode_frame = QHBoxLayout()
+        
+        color_mode_label = QLabel("Renk Modu:")
+        color_mode_label.setFixedWidth(80)
+        dmx_color_mode_frame.addWidget(color_mode_label)
+        
+        self.color_mode_combo = QComboBox()
+        self.color_mode_combo.addItem("Frequency-based", "frequency")
+        self.color_mode_combo.addItem("Smart Random", "smart_random")
+        self.color_mode_combo.setToolTip("Renk değişim modunu seçin")
+        self.color_mode_combo.setCurrentIndex(0)  # Default to frequency-based
+        dmx_color_mode_frame.addWidget(self.color_mode_combo)
+        
+        dmx_color_mode_frame.addStretch()
+        layout.addLayout(dmx_color_mode_frame)
+        
         # DMX Manuel Kontroller - Ch5 Master Dimmer
         dmx_ch5_frame = QHBoxLayout()
         
@@ -1533,11 +1825,59 @@ class VUMeterApp(QMainWindow):
             self.rnn_enable_checkbox.stateChanged.connect(self.on_rnn_enable_changed)
             rnn_frame.addWidget(self.rnn_enable_checkbox)
             
+            # Auto Training Checkbox
+            self.auto_training_checkbox = QCheckBox("Otomatik Eğitim")
+            self.auto_training_checkbox.setToolTip("Sample toplama ve eğitimi otomatik yap")
+            self.auto_training_checkbox.stateChanged.connect(self.on_auto_training_changed)
+            rnn_frame.addWidget(self.auto_training_checkbox)
+            
+            # Sample Collection
+            # Sample size control
+            sample_size_layout = QHBoxLayout()
+            sample_size_label = QLabel("Sample Hedefi:")
+            sample_size_label.setStyleSheet("color:white; font-weight:bold;")
+            sample_size_layout.addWidget(sample_size_label)
+            
+            self.sample_size_spinbox = QSpinBox()
+            self.sample_size_spinbox.setRange(100, 50000)
+            self.sample_size_spinbox.setValue(1200)
+            self.sample_size_spinbox.setSuffix(" sample")
+            self.sample_size_spinbox.setToolTip("Toplanacak sample sayısını ayarla")
+            self.sample_size_spinbox.setStyleSheet("""
+                QSpinBox {
+                    background-color: #2b2b2b;
+                    color: white;
+                    border: 1px solid #555;
+                    border-radius: 3px;
+                    padding: 2px;
+                    min-width: 80px;
+                }
+                QSpinBox::up-button, QSpinBox::down-button {
+                    background-color: #444;
+                    border: 1px solid #666;
+                    width: 15px;
+                }
+                QSpinBox::up-button:hover, QSpinBox::down-button:hover {
+                    background-color: #555;
+                }
+            """)
+            self.sample_size_spinbox.valueChanged.connect(self.on_sample_size_changed)
+            sample_size_layout.addWidget(self.sample_size_spinbox)
+            sample_size_layout.addStretch()
+            rnn_frame.addLayout(sample_size_layout)
+            
+            self.sample_collect_btn = QPushButton("Sample Topla (0/1200)")
+            self.sample_collect_btn.setToolTip("Belirtilen sayıda sample topla")
+            self.sample_collect_btn.clicked.connect(self.toggle_sample_collection)
+            self.sample_collect_btn.setStyleSheet("background-color:#4CAF50; color:white; padding:3px;")
+            rnn_frame.addWidget(self.sample_collect_btn)
+            
             # RNN Training
             self.rnn_train_btn = QPushButton("RNN Eğit")
-            self.rnn_train_btn.setToolTip("Toplanan verilerle RNN modelini eğit")
+            self.rnn_train_btn.setToolTip("Toplanan verilerle RNN modelini eğit (1200+ sample gerekli)")
             self.rnn_train_btn.clicked.connect(self.train_rnn_model)
             self.rnn_train_btn.setStyleSheet("background-color:#FF9800; color:white; padding:3px;")
+            self.rnn_train_btn.setEnabled(False)  # Initially disabled
             rnn_frame.addWidget(self.rnn_train_btn)
             
             # RNN Training Progress Bar
@@ -1570,8 +1910,61 @@ class VUMeterApp(QMainWindow):
             rnn_frame.addStretch()
             layout.addLayout(rnn_frame)
             
+            # RNN Offset Controls
+            rnn_offset_frame = QHBoxLayout()
+            rnn_offset_label = QLabel("🎛️ RNN Offset:")
+            rnn_offset_label.setStyleSheet("font-weight:bold; color:#9C27B0;")
+            rnn_offset_frame.addWidget(rnn_offset_label)
+            
+            # Pan Offset
+            pan_offset_label = QLabel("Pan:")
+            pan_offset_label.setFixedWidth(30)
+            rnn_offset_frame.addWidget(pan_offset_label)
+            
+            self.pan_offset_spinbox = QSpinBox()
+            self.pan_offset_spinbox.setRange(-127, 127)
+            self.pan_offset_spinbox.setValue(0)
+            self.pan_offset_spinbox.setToolTip("Pan offset (-127 to +127)")
+            self.pan_offset_spinbox.setStyleSheet("""
+                QSpinBox {
+                    background-color: #2b2b2b;
+                    color: white;
+                    border: 1px solid #555;
+                    border-radius: 3px;
+                    padding: 2px;
+                    min-width: 60px;
+                }
+            """)
+            self.pan_offset_spinbox.valueChanged.connect(self.on_pan_offset_changed)
+            rnn_offset_frame.addWidget(self.pan_offset_spinbox)
+            
+            # Tilt Offset
+            tilt_offset_label = QLabel("Tilt:")
+            tilt_offset_label.setFixedWidth(30)
+            rnn_offset_frame.addWidget(tilt_offset_label)
+            
+            self.tilt_offset_spinbox = QSpinBox()
+            self.tilt_offset_spinbox.setRange(-127, 127)
+            self.tilt_offset_spinbox.setValue(0)
+            self.tilt_offset_spinbox.setToolTip("Tilt offset (-127 to +127)")
+            self.tilt_offset_spinbox.setStyleSheet("""
+                QSpinBox {
+                    background-color: #2b2b2b;
+                    color: white;
+                    border: 1px solid #555;
+                    border-radius: 3px;
+                    padding: 2px;
+                    min-width: 60px;
+                }
+            """)
+            self.tilt_offset_spinbox.valueChanged.connect(self.on_tilt_offset_changed)
+            rnn_offset_frame.addWidget(self.tilt_offset_spinbox)
+            
+            rnn_offset_frame.addStretch()
+            layout.addLayout(rnn_offset_frame)
+            
             # RNN Info
-            rnn_info = QLabel("🧠 RNN: LSTM ile ses verilerinden Pan/Tilt/Color/Dimmer değerleri tahmin eder. Auto-retrain active!")
+            rnn_info = QLabel("🧠 RNN: LSTM ile ses verilerinden Pan/Tilt/Color/Dimmer değerleri tahmin eder. Manuel eğitim!")
             rnn_info.setStyleSheet("font-size:9px; color:#9C27B0; font-weight:bold; padding:3px; background-color:#F3E5F5; border-radius:3px;")
             layout.addWidget(rnn_info)
         else:
@@ -1808,7 +2201,7 @@ class VUMeterApp(QMainWindow):
         else:
             self._rnn_stats_counter = 0
             
-        if self._rnn_stats_counter >= 60:  # ~1 saniyede bir güncelle
+        if self._rnn_stats_counter >= 300:  # ~5 saniyede bir güncelle (60fps * 5s = 300)
             self._rnn_stats_counter = 0
             self.update_rnn_stats()
         
@@ -2156,26 +2549,158 @@ class VUMeterApp(QMainWindow):
         try:
             enabled = state == 2  # Qt.Checked = 2
             if hasattr(self, 'dmx_controller'):
+                # DMX bağlantısı kontrolü
+                if enabled and not self.dmx_controller.enabled:
+                    print("⚠️ RNN aktif edilemez: DMX bağlantısı yok!")
+                    self.rnn_enable_checkbox.setChecked(False)
+                    self.rnn_status_label.setText("RNN: DMX Bağlantısı Yok")
+                    self.rnn_status_label.setStyleSheet("color:orange; font-weight:bold;")
+                    return
+                
+                # Check if model is trained before enabling
+                if enabled and not self.dmx_controller.rnn_controller.is_model_trained():
+                    self.rnn_status_label.setText("RNN: Model Eğitilmemiş")
+                    self.rnn_status_label.setStyleSheet("color:orange; font-weight:bold;")
+                    print("⚠️ RNN Model eğitilmemiş! Önce eğitim yapın.")
+                    return
+                
                 self.dmx_controller.enable_rnn_mode(enabled)
                 
                 # UI güncelle
                 if enabled:
                     self.rnn_status_label.setText("RNN: Aktif")
                     self.rnn_status_label.setStyleSheet("color:green; font-weight:bold;")
+                    print("✅ RNN aktif edildi")
                 else:
                     self.rnn_status_label.setText("RNN: Kapalı")
                     self.rnn_status_label.setStyleSheet("color:red; font-weight:bold;")
+                    print("⏹️ RNN kapatıldı")
                     
                 logger.info(f"RNN mode {'enabled' if enabled else 'disabled'}")
         except Exception as e:
             logger.error(f"RNN enable/disable hatası: {e}")
     
+    def on_sample_size_changed(self, value):
+        """Sample hedefi değiştiğinde"""
+        # Button text'ini güncelle
+        if hasattr(self, 'sample_collect_btn'):
+            current_samples = 0
+            if hasattr(self, 'dmx_controller') and self.dmx_controller.rnn_controller:
+                current_samples = len(self.dmx_controller.rnn_controller.dataset.audio_sequences)
+            self.sample_collect_btn.setText(f"Sample Topla ({current_samples}/{value})")
+        
+        # Tooltip'i güncelle
+    
+    def on_pan_offset_changed(self):
+        """Pan offset değiştiğinde RNN controller'ı güncelle"""
+        if hasattr(self, 'dmx_controller') and self.dmx_controller and hasattr(self.dmx_controller, 'rnn_controller') and self.dmx_controller.rnn_controller:
+            self.dmx_controller.rnn_controller.pan_offset = self.pan_offset_spinbox.value()
+            print(f"🎛️ Pan offset set to: {self.pan_offset_spinbox.value()}")
+    
+    def on_tilt_offset_changed(self):
+        """Tilt offset değiştiğinde RNN controller'ı güncelle"""
+        if hasattr(self, 'dmx_controller') and self.dmx_controller and hasattr(self.dmx_controller, 'rnn_controller') and self.dmx_controller.rnn_controller:
+            self.dmx_controller.rnn_controller.tilt_offset = self.tilt_offset_spinbox.value()
+            print(f"🎛️ Tilt offset set to: {self.tilt_offset_spinbox.value()}")
+        if hasattr(self, 'rnn_train_btn'):
+            self.rnn_train_btn.setToolTip(f"Toplanan verilerle RNN modelini eğit ({value}+ sample gerekli)")
+        
+        logger.info(f"Sample hedefi değiştirildi: {value}")
+    
+    def on_auto_training_changed(self, state):
+        """Otomatik eğitim checkbox değiştiğinde"""
+        auto_enabled = state == Qt.Checked
+        if auto_enabled:
+            # Otomatik eğitimi başlat
+            self.start_auto_training()
+        else:
+            # Otomatik eğitimi durdur
+            self.stop_auto_training()
+    
+    def start_auto_training(self):
+        """Otomatik eğitimi başlat"""
+        if not hasattr(self, 'dmx_controller') or not self.dmx_controller.rnn_controller:
+            logger.warning("RNN Controller not available")
+            self.auto_training_checkbox.setChecked(False)
+            return
+        
+        # Sample collection'ı başlat
+        self.dmx_controller.sample_collection_active = True
+        # RNN'yi kapatma - sample toplarken de RNN aktif kalsın
+        # self.dmx_controller.rnn_enabled = False  # Force heuristic mode
+        # self.rnn_enable_checkbox.setChecked(False)
+        target_samples = self.sample_size_spinbox.value()
+        self.sample_collect_btn.setText(f"Otomatik Toplama... (0/{target_samples})")
+        self.sample_collect_btn.setStyleSheet("background-color:#F44336; color:white; padding:3px;")
+        self.sample_collect_btn.setEnabled(False)  # Disable manual button
+        self.rnn_train_btn.setEnabled(False)  # Disable until samples ready
+        logger.info("Auto training started - Sample collection active, RNN remains active")
+        print("🤖 Otomatik eğitim başladı - Sample toplama aktif, RNN aktif kalıyor")
+    
+    def stop_auto_training(self):
+        """Otomatik eğitimi durdur"""
+        self.dmx_controller.sample_collection_active = False
+        target_samples = self.sample_size_spinbox.value()
+        self.sample_collect_btn.setText(f"Sample Topla (0/{target_samples})")
+        self.sample_collect_btn.setStyleSheet("background-color:#4CAF50; color:white; padding:3px;")
+        self.sample_collect_btn.setEnabled(True)  # Re-enable manual button
+        logger.info("Auto training stopped")
+        print("⏹️ Otomatik eğitim durduruldu")
+    
+    def toggle_sample_collection(self):
+        """Toggle sample collection on/off (manual mode)"""
+        if not hasattr(self, 'dmx_controller') or not self.dmx_controller.rnn_controller:
+            logger.warning("RNN Controller not available")
+            return
+        
+        if not self.dmx_controller.sample_collection_active:
+            # Start sample collection
+            self.dmx_controller.sample_collection_active = True
+            # RNN'yi kapatma - sample toplarken de RNN aktif kalsın
+            # self.dmx_controller.rnn_enabled = False  # Force heuristic mode
+            # self.rnn_enable_checkbox.setChecked(False)
+            target_samples = self.sample_size_spinbox.value()
+            self.sample_collect_btn.setText(f"Sample Topla (0/{target_samples})")
+            self.sample_collect_btn.setStyleSheet("background-color:#F44336; color:white; padding:3px;")
+            logger.info("Sample collection started - RNN mode remains active")
+        else:
+            # Stop sample collection
+            self.dmx_controller.sample_collection_active = False
+            target_samples = self.sample_size_spinbox.value()
+            self.sample_collect_btn.setText(f"Sample Topla (0/{target_samples})")
+            self.sample_collect_btn.setStyleSheet("background-color:#4CAF50; color:white; padding:3px;")
+            logger.info("Sample collection stopped")
+    
     def train_rnn_model(self):
-        """RNN modelini eğit"""
+        """RNN modelini eğit (ayrı process'te)"""
         try:
             if not hasattr(self, 'dmx_controller') or not self.dmx_controller.rnn_controller:
                 logger.error("RNN Controller mevcut değil")
                 return
+                
+            # Eğer zaten eğitim yapılıyorsa, iptal et
+            if self.training_thread and self.training_thread.isRunning():
+                logger.info("Eğitim zaten devam ediyor...")
+                return
+            
+            # Yeterli veri var mı kontrol et (hedef sample gerekli)
+            samples_count = len(self.dmx_controller.rnn_controller.dataset.audio_sequences)
+            target_samples = 1200  # Default value
+            if hasattr(self, 'sample_size_spinbox'):
+                target_samples = self.sample_size_spinbox.value()
+            
+            if samples_count < target_samples:
+                logger.warning(f"Yetersiz veri: {samples_count} sample, {target_samples} gerekli")
+                self.rnn_train_btn.setText("❌ Yetersiz Veri")
+                self.rnn_train_btn.setEnabled(False)
+                # 3 saniye sonra butonu tekrar aktif et
+                QTimer.singleShot(3000, lambda: self.rnn_train_btn.setText("RNN Eğit"))
+                QTimer.singleShot(3000, lambda: self.rnn_train_btn.setEnabled(True))
+                return
+            
+            # Mevcut veriyi kaydet
+            self.dmx_controller.rnn_controller.dataset.save_to_file("rnn_training_data.json")
+            logger.info(f"Eğitim için veri kaydedildi: {samples_count} samples")
                 
             epochs = self.rnn_epochs_spin.value()
             logger.info(f"RNN eğitimi başlatılıyor ({epochs} epochs)...")
@@ -2186,25 +2711,14 @@ class VUMeterApp(QMainWindow):
             self.rnn_progress.setVisible(True)
             self.rnn_progress.setValue(0)
             
-            # Eğitimi başlat (ilerleme çubuğu ile)
-            success = self.dmx_controller.train_rnn_model_with_progress(
-                epochs=epochs, 
-                progress_callback=self.update_rnn_progress
-            )
+            # Process oluştur ve başlat (ana dosya ile)
+            self.training_thread = RNNTrainingProcess(epochs)
             
-            if success:
-                logger.info("RNN eğitimi tamamlandı")
-                self.rnn_train_btn.setText("✅ Eğitildi")
-                self.rnn_progress.setValue(100)
-            else:
-                logger.error("RNN eğitimi başarısız")
-                self.rnn_train_btn.setText("❌ Hata")
+            # Signal'ları bağla
+            self.training_thread.training_finished.connect(self.on_training_finished)
             
-            # UI'yi geri yükle
-            self.rnn_train_btn.setEnabled(True)
-            
-            # İlerleme çubuğunu gizle (2 saniye sonra)
-            QTimer.singleShot(2000, lambda: self.rnn_progress.setVisible(False))
+            # Process'i başlat
+            self.training_thread.start()
             
         except Exception as e:
             logger.error(f"RNN eğitim hatası: {e}")
@@ -2213,14 +2727,95 @@ class VUMeterApp(QMainWindow):
                 self.rnn_train_btn.setEnabled(True)
                 self.rnn_progress.setVisible(False)
     
-    def update_rnn_progress(self, epoch, total_epochs, loss):
-        """RNN eğitim ilerlemesini güncelle"""
+    def on_training_finished(self, success, message):
+        """Eğitim tamamlandığında çağrılır"""
         try:
-            progress = int((epoch / total_epochs) * 100)
-            self.rnn_progress.setValue(progress)
-            self.rnn_progress.setFormat(f"Epoch {epoch}/{total_epochs} - Loss: {loss:.6f}")
+            # UI'yi geri yükle
+            self.rnn_train_btn.setEnabled(True)
+            
+            if success:
+                logger.info(message)
+                self.rnn_train_btn.setText("✅ Eğitildi")
+                self.rnn_progress.setValue(100)
+                
+                # Model'i yeniden yükle
+                if hasattr(self, 'dmx_controller') and self.dmx_controller and hasattr(self.dmx_controller, 'rnn_controller') and self.dmx_controller.rnn_controller:
+                    try:
+                        print("🔄 RNN Model yeniden yükleniyor...")
+                        self.dmx_controller.rnn_controller.load_model()
+                        logger.info("Model başarıyla yeniden yüklendi!")
+                        print("✅ RNN Model başarıyla yeniden yüklendi!")
+                        
+                        # Model yüklendikten sonra RNN'yi aktif et
+                        if hasattr(self.dmx_controller, 'enable_rnn_mode'):
+                            self.dmx_controller.enable_rnn_mode(True)
+                            # UI checkbox'ını da güncelle
+                            self.rnn_enable_checkbox.setChecked(True)
+                            # Status label'ı güncelle
+                            if hasattr(self, 'rnn_status_label'):
+                                self.rnn_status_label.setText("RNN: Aktif")
+                                self.rnn_status_label.setStyleSheet("color:green; font-weight:bold;")
+                            print("✅ RNN Mode aktif edildi!")
+                    except Exception as e:
+                        logger.error(f"Model yükleme hatası: {e}")
+                        print(f"❌ Model yükleme hatası: {e}")
+                else:
+                    logger.warning("RNN Controller mevcut değil, model yüklenemedi")
+                    print("⚠️ RNN Controller mevcut değil")
+                
+                # Eğitim tarihini güncelle
+                if hasattr(self, 'dmx_controller') and self.dmx_controller.rnn_controller:
+                    self.dmx_controller.rnn_controller.last_training_time = time.time()
+                
+                # Eğitim sonrası samples'ları temizle
+                if hasattr(self, 'dmx_controller') and self.dmx_controller.rnn_controller:
+                    self.dmx_controller.rnn_controller.clear_training_data()
+                    logger.info("Samples cleared after training")
+                
+                # Sample collection butonunu sıfırla
+                target_samples = self.sample_size_spinbox.value()
+                self.sample_collect_btn.setText(f"Sample Topla (0/{target_samples})")
+                self.sample_collect_btn.setStyleSheet("background-color:#4CAF50; color:white; padding:3px;")
+                self.sample_collect_btn.setEnabled(True)  # Re-enable manual button
+                self.rnn_train_btn.setEnabled(False)  # Disable until new samples collected
+                
+                # Otomatik eğitim aktifse yeni cycle başlat
+                if self.auto_training_checkbox.isChecked():
+                    print("🔄 Otomatik eğitim - Yeni cycle başlatılıyor...")
+                    QTimer.singleShot(2000, self.start_auto_training)  # 2 saniye sonra başlat
+                else:
+                    logger.info("Eğitim tamamlandı, yeni sample toplama için hazır")
+                
+                # 3 saniye sonra butonu tekrar aktif et
+                QTimer.singleShot(3000, lambda: self.rnn_train_btn.setText("Eğitim Yap"))
+            else:
+                logger.error(f"Eğitim hatası: {message}")
+                self.rnn_train_btn.setText(f"❌ Hata: {message[:20]}...")
+                
+                # Sample collection butonunu sıfırla
+                target_samples = self.sample_size_spinbox.value()
+                self.sample_collect_btn.setText(f"Sample Topla (0/{target_samples})")
+                self.sample_collect_btn.setStyleSheet("background-color:#4CAF50; color:white; padding:3px;")
+                logger.info("Eğitim hatası, sample toplama için hazır")
+                
+                # 3 saniye sonra butonu tekrar aktif et
+                QTimer.singleShot(3000, lambda: self.rnn_train_btn.setText("Eğitim Yap"))
+            
+            # İlerleme çubuğunu gizle (2 saniye sonra)
+            QTimer.singleShot(2000, lambda: self.rnn_progress.setVisible(False))
+            
+            # Thread'i temizle
+            if self.training_thread:
+                self.training_thread.deleteLater()
+                self.training_thread = None
+                
         except Exception as e:
-            logger.debug(f"Progress update error: {e}")
+            logger.error(f"Training finished callback error: {e}")
+    
+    def update_rnn_progress(self, epoch, total_epochs, loss):
+        """RNN eğitim ilerlemesini güncelle (artık kullanılmıyor)"""
+        # Process-based eğitimde progress tracking yok
+        pass
     
     def update_rnn_stats(self):
         """RNN istatistiklerini güncelle"""
@@ -2244,7 +2839,15 @@ class VUMeterApp(QMainWindow):
                         self.rnn_status_label.setText("RNN: 🔄 Auto-Training...")
                         self.rnn_status_label.setStyleSheet("color:orange; font-weight:bold;")
                     else:
-                        self.rnn_stats_label.setText(f"Samples: {samples} | Auto-retrain in: {remaining}")
+                        # Son eğitim tarihini göster
+                        last_training = getattr(self.dmx_controller.rnn_controller, 'last_training_time', None)
+                        if last_training:
+                            import datetime
+                            training_time = datetime.datetime.fromtimestamp(last_training)
+                            time_str = training_time.strftime("%H:%M:%S")
+                            self.rnn_stats_label.setText(f"Samples: {samples} | Son eğitim: {time_str}")
+                        else:
+                            self.rnn_stats_label.setText(f"Samples: {samples} | Manuel eğitim gerekli")
                         # Update RNN status based on enabled state
                         if hasattr(self, 'rnn_enable_checkbox') and self.rnn_enable_checkbox.isChecked():
                             self.rnn_status_label.setText("RNN: Aktif")
