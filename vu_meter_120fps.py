@@ -373,7 +373,11 @@ class DMXController:
                 current_color = self.dmx_data[2]  # Channel 3 (0-indexed)
                 current_dimmer = self.dmx_data[5] # Channel 6 (0-indexed)
                 self.rnn_controller.add_audio_sample(audio_bands, current_pan, current_tilt, current_color, current_dimmer)
+                # Debug: Her 50 sample'da bir log
+                if len(self.rnn_controller.dataset.audio_sequences) % 50 == 0:
+                    print(f"DEBUG: RNN samples collected: {len(self.rnn_controller.dataset.audio_sequences)}")
             except Exception as e:
+                print(f"DEBUG: RNN data collection failed: {e}")
                 self.logger.debug(f"RNN data collection failed: {e}")
         
         # 🎯 BEAT STATE: Beat detection for Pan/Tilt heuristic

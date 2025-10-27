@@ -148,12 +148,12 @@ class RNN_DimController(nn.Module):
         """Predict DMX values for a single sequence (Pan, Tilt, Color, Dimmer)"""
         self.eval()
         with torch.no_grad():
-            # Convert to tensor and add batch dimension
-            x = torch.FloatTensor(audio_sequence).unsqueeze(0)  # (1, seq_len, input_size)
+            # Convert to tensor and add batch dimension, move to device
+            x = torch.FloatTensor(audio_sequence).unsqueeze(0).to(self.device)  # (1, seq_len, input_size)
             
             # Predict
             output = self.forward(x)
-            return output[0].tolist()  # [pan, tilt, color, dimmer] normalized 0-1
+            return output[0].cpu().tolist()  # [pan, tilt, color, dimmer] normalized 0-1
 
 
 class RNNDimController:
@@ -169,8 +169,13 @@ class RNNDimController:
         self.auto_retrain_interval = auto_retrain_interval
         self.samples_since_last_train = 0
         
+        # Check for CUDA availability
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        logger.info(f"Using device: {self.device}")
+        
         # Initialize model
         self.model = RNN_DimController(input_size=6, hidden_size=64, num_layers=2, output_size=4)
+        self.model.to(self.device)  # Move model to device
         self.optimizer = optim.Adam(self.model.parameters(), lr=0.001)
         self.criterion = nn.MSELoss()
         
@@ -256,9 +261,9 @@ class RNNDimController:
         
         logger.info(f"Training RNN with {len(X)} sequences")
         
-        # Convert to tensors
-        X_tensor = torch.FloatTensor(X)
-        y_tensor = torch.FloatTensor(y).unsqueeze(1)
+        # Convert to tensors and move to device
+        X_tensor = torch.FloatTensor(X).to(self.device)
+        y_tensor = torch.FloatTensor(y).to(self.device)
         
         # Create data loader
         dataset = torch.utils.data.TensorDataset(X_tensor, y_tensor)
@@ -302,9 +307,9 @@ class RNNDimController:
         
         logger.info(f"Training RNN with {len(X)} sequences")
         
-        # Convert to tensors
-        X_tensor = torch.FloatTensor(X)
-        y_tensor = torch.FloatTensor(y).unsqueeze(1)
+        # Convert to tensors and move to device
+        X_tensor = torch.FloatTensor(X).to(self.device)
+        y_tensor = torch.FloatTensor(y).to(self.device)
         
         # Create data loader
         dataset = torch.utils.data.TensorDataset(X_tensor, y_tensor)
@@ -392,7 +397,8 @@ class RNNDimController:
             'model_state_dict': self.model.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
             'training_losses': self.training_losses,
-            'sequence_length': self.sequence_length
+            'sequence_length': self.sequence_length,
+            'device': str(self.device)
         }, self.model_path)
         
         # Also save training data
@@ -403,11 +409,13 @@ class RNNDimController:
     def load_model(self):
         """Load a trained model"""
         if os.path.exists(self.model_path):
-            checkpoint = torch.load(self.model_path, map_location='cpu')
+            checkpoint = torch.load(self.model_path, map_location=self.device)
             self.model.load_state_dict(checkpoint['model_state_dict'])
             self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
             self.training_losses = checkpoint.get('training_losses', [])
-            logger.info(f"Model loaded from {self.model_path}")
+            # Move model back to current device
+            self.model.to(self.device)
+            logger.info(f"Model loaded from {self.model_path} on {self.device}")
         else:
             logger.info("No existing model found, using untrained model")
     
