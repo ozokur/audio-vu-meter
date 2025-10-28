@@ -2,7 +2,7 @@
 # Python 3.7+
 
 # Ses kartı I/O - Windows WASAPI loopback desteği ile
-pyaudiowpatch>=0.2.12.5
+pyaudio>=0.2.11
 
 # GUI Framework
 PyQt5>=5.15.0
