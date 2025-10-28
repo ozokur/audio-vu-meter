@@ -363,11 +363,11 @@ class RNNDimController:
             'dimmer': max(0, min(255, dimmer_value))
         }
         
-        # Debug disabled - RNN values
-        # if current_time - self._last_debug_time > 2.0:
-        #     print(f"🔍 RNN Raw: {[f'{v:.3f}' for v in predicted_values]}")
-        #     print(f"🎯 RNN Final: Pan={result['pan']}, Tilt={result['tilt']}, Color={result['color']}, Dimmer={result['dimmer']}")
-        #     self._last_debug_time = current_time
+        # Debug enabled for troubleshooting
+        if current_time - self._last_debug_time > 2.0:
+            print(f"🔍 RNN Raw: {[f'{v:.3f}' for v in predicted_values]}")
+            print(f"🎯 RNN Final: Pan={result['pan']}, Tilt={result['tilt']}, Color={result['color']}, Dimmer={result['dimmer']}")
+            self._last_debug_time = current_time
         
         return result
     

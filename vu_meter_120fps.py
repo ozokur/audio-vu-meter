@@ -39,7 +39,11 @@ try:
 except ImportError as e:
     RNN_AVAILABLE = False
     print(f"RNN: PyTorch not available: {e}")
-    print("RNN: Install PyTorch with: pip install torch")
+    print("RNN: RNN features disabled, using Heuristic mode only")
+except OSError as e:
+    RNN_AVAILABLE = False
+    print(f"RNN: PyTorch DLL error: {e}")
+    print("RNN: RNN features disabled, using Heuristic mode only")
 
 __version__ = "1.8.0"
 
@@ -76,7 +80,7 @@ class AudioMonitor(QObject):
         super().__init__()
         self.sample_rate = DEFAULT_SAMPLE_RATE
         self.chunk_size = DEFAULT_CHUNK_SIZE  # Balanced: 43 Hz callback rate, 43 Hz freq resolution (~2 bins in 20-100Hz)
-        self.channels = DEFAULT_CHANNELS
+        self.channels = 2  # WASAPI loopback için stereo
         self.device_index = None
         self.use_loopback = False
         self.pa = None
@@ -86,7 +90,26 @@ class AudioMonitor(QObject):
         try:
             self.pa = pyaudio.PyAudio()
             if self.device_index is None:
-                self.device_index = self.pa.get_default_input_device_info()['index']
+                # WASAPI loopback cihazını bul
+                try:
+                    wasapi = self.pa.get_host_api_info_by_type(pyaudio.paWASAPI)
+                    default_out = self.pa.get_device_info_by_index(wasapi["defaultOutputDevice"])
+                    if not default_out.get("isLoopbackDevice", False):
+                        for loopback in self.pa.get_loopback_device_info_generator():
+                            if default_out["name"] in loopback["name"]:
+                                self.device_index = loopback['index']
+                                self.use_loopback = True
+                                print(f"🎵 WASAPI Loopback bulundu: {loopback['name']} (Index: {self.device_index})")
+                                break
+                    else:
+                        self.device_index = default_out['index']
+                        self.use_loopback = True
+                        print(f"🎵 WASAPI Loopback bulundu: {default_out['name']} (Index: {self.device_index})")
+                except Exception as e:
+                    print(f"⚠️ WASAPI loopback bulunamadı, varsayılan giriş kullanılıyor: {e}")
+                    self.device_index = self.pa.get_default_input_device_info()['index']
+                    self.use_loopback = False
+            
             device_info = self.pa.get_device_info_by_index(self.device_index)
             params = dict(
                 format=AUDIO_FORMAT,
@@ -99,6 +122,7 @@ class AudioMonitor(QObject):
             )
             self.stream = self.pa.open(**params)
             self.stream.start_stream()
+            print(f"✅ Ses kartı başlatıldı: {device_info['name']} (Loopback: {self.use_loopback})")
         except Exception as e:
             logger.exception("Ses kartı başlatma hatası")
             self.error_occurred.emit(f"Ses kartı hatası: {e}")
@@ -115,6 +139,13 @@ class AudioMonitor(QObject):
                     if self.channels == 2 and data.size >= 2:
                         left = data[0::2]
                         right = data[1::2]
+                        # Debug: WASAPI loopback veri alınıyor mu?
+                        if not hasattr(self, '_debug_count'):
+                            self._debug_count = 0
+                        self._debug_count += 1
+                        if self._debug_count % 100 == 0:  # Her 100 callback'te bir
+                            loopback_status = "WASAPI Loopback" if self.use_loopback else "Mikrofon"
+                            print(f"🎵 {loopback_status} Audio: data_size={data.size}, left_samples={len(left)}, right_samples={len(right)}")
                     else:
                         left = right = data
                     l_rms = float(np.sqrt(max(EPSILON, float(np.mean(left * left))))) / INT16_MAX
@@ -469,8 +500,8 @@ class DMXController:
                 color_value = rnn_prediction['color']
                 base_brightness = rnn_prediction['dimmer']
                 
-                # Debug disabled - RNN DMX values
-                # print(f"🎯 RNN DMX: Pan={pan_value}, Tilt={tilt_value}, Color={color_value}, Dimmer={base_brightness}")
+                # Debug enabled for troubleshooting
+                print(f"🎯 RNN DMX: Pan={pan_value}, Tilt={tilt_value}, Color={color_value}, Dimmer={base_brightness}")
                 self.logger.debug(f"RNN predicted: Pan={pan_value}, Tilt={tilt_value}, Color={color_value}, Dimmer={base_brightness}")
                 
             except Exception as e:
